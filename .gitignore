@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+
+# Database
+data/coach.db
+
+# Audio recordings
+data/audio_sessions/
+
+# Logs
+data/logs/
+
+# Virtual env
+venv/
+.env
+
+# OS
+.DS_Store
+Thumbs.db

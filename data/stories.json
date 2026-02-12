@@ -1,0 +1,160 @@
+[
+  {
+    "id": "articulation_ch_le_vent",
+    "title": "Le vent — Maîtriser CH",
+    "level": 1,
+    "goal": "Maîtriser le son « CH » et vérifier qu'il ne glisse pas vers « S ».",
+    "target_phonemes": ["ʃ"],
+    "contrast_phonemes": ["s"],
+    "tags": ["ch", "s", "fricatives", "ch_vs_s"],
+    "notes_adulte": "Surveiller substitutions ʃ→s.",
+    "sentences": [
+      "Le chat marche sur le chemin du château.",
+      "Sacha cherche une chaussette dans la chambre.",
+      "Le chevalier cache un chocolat sous sa chemise.",
+      "Charlotte chante une chanson pour son petit chien.",
+      "Il y a sept champignons sur la souche.",
+      "Le singe cache sa brioche dans la poche.",
+      "Dimanche, nous irons chercher des coquillages.",
+      "Le joli trésor est caché sous la chaise."
+    ]
+  },
+  {
+    "id": "articulation_s_le_serpent",
+    "title": "Le serpent — Maîtriser S",
+    "level": 1,
+    "goal": "Maîtriser le son « S » et détecter un éventuel zozotement (sigmatisme).",
+    "target_phonemes": ["s"],
+    "contrast_phonemes": ["ʃ", "θ"],
+    "tags": ["s", "fricatives", "sigmatisme"],
+    "sentences": [
+      "Le serpent siffle dans le sac de sable.",
+      "Sept souris se sauvent sans faire de bruit.",
+      "Simon sème des semences sur le sol sec.",
+      "Le soleil brille sur le seau de sable.",
+      "Sophie a six sacs de sucre."
+    ]
+  },
+  {
+    "id": "articulation_k_vs_t_caillou",
+    "title": "Le caillou — K vs T",
+    "level": 1,
+    "goal": "Corriger le remplacement des sons du fond (K) par ceux de devant (T).",
+    "target_phonemes": ["k"],
+    "contrast_phonemes": ["t"],
+    "tags": ["occlusives", "k_vs_t", "articulation"],
+    "sentences": [
+      "Le coq casse un caillou.",
+      "Kevin croque quatre kiwis.",
+      "Le canard quitte le lac.",
+      "Quel joli cadeau rose.",
+      "Le chaton noir boit du lait."
+    ]
+  },
+  {
+    "id": "articulation_f_vs_v_vent",
+    "title": "La forêt — F vs V",
+    "level": 1,
+    "goal": "Travailler le voisement (vibration des cordes vocales sur le V).",
+    "target_phonemes": ["v"],
+    "contrast_phonemes": ["f"],
+    "tags": ["fricatives", "voisement", "f_vs_v"],
+    "sentences": [
+      "Le vent va vite.",
+      "Valérie voit vingt vélos.",
+      "Le vieux vase vert.",
+      "Vive les vacances.",
+      "La fourmi va vers la forêt."
+    ]
+  },
+  {
+    "id": "groupe_consonantique_tr_dr",
+    "title": "Le petit train — TR vs DR",
+    "level": 2,
+    "goal": "Maîtriser les groupes de consonnes complexes (clusters).",
+    "target_phonemes": ["tʁ", "dʁ"],
+    "contrast_phonemes": ["t", "d"],
+    "tags": ["groupes", "liquides", "tr", "dr"],
+    "sentences": [
+      "J'ai trouvé trois trésors très précieux.",
+      "La truite trépigne dans l'eau très froide.",
+      "Maître Tristan travaille avec son tracteur.",
+      "Le train roule trop vite.",
+      "Le dragon de Driss dort.",
+      "Le dromadaire boit de l'eau."
+    ]
+  },
+  {
+    "id": "nasalite_on_an_in",
+    "title": "Le tonton — Sons nasaux",
+    "level": 1,
+    "goal": "Vérifier le passage de l'air par le nez.",
+    "target_phonemes": ["ɔ̃", "ɑ̃", "ɛ̃"],
+    "tags": ["voyelles", "nasales", "resonnance"],
+    "sentences": [
+      "Mon tonton mange un bonbon.",
+      "Maman attend l'enfant.",
+      "Le lapin veut du pain.",
+      "Simon montre son menton.",
+      "Le papillon s'envole loin."
+    ]
+  },
+  {
+    "id": "bourdonnement_j_vs_z",
+    "title": "Le jardin — J vs Z",
+    "level": 2,
+    "goal": "Travailler la distinction « J » vs « Z » et le voisement.",
+    "target_phonemes": ["ʒ", "z"],
+    "contrast_phonemes": ["ʃ", "s"],
+    "tags": ["j", "z", "voisement", "fricatives"],
+    "sentences": [
+      "Julie mange du melon au jardin.",
+      "Le pyjama de Jean est rouge et jaune.",
+      "Le zèbre est azuré mais le jaguar est joli.",
+      "Je joue avec un jouet magique."
+    ]
+  },
+  {
+    "id": "liquides_l_vs_r_lune",
+    "title": "Le lapin et le rat — L vs R",
+    "level": 2,
+    "goal": "Distinguer les deux consonnes liquides.",
+    "target_phonemes": ["l", "ʁ"],
+    "tags": ["liquides", "l_vs_r", "dyslalie"],
+    "sentences": [
+      "Le rat lèche la lune.",
+      "Lara lit sur le mur.",
+      "Le loup regarde le renard.",
+      "Lulu répare le lit.",
+      "Le lapin rigole dans la rue."
+    ]
+  },
+  {
+    "id": "syllabes_inverses_al_ar",
+    "title": "La finale — Syllabes Inverses",
+    "level": 2,
+    "goal": "Vérifier la tenue de la consonne en fin de mot.",
+    "target_phonemes": ["l", "ʁ", "p"],
+    "tags": ["structure", "finales"],
+    "sentences": [
+      "Le bal est fini.",
+      "Il fait très chaud dehors.",
+      "Le fil est sur l'or.",
+      "Le cap est au sud."
+    ]
+  },
+  {
+    "id": "articulation_gn_montagne",
+    "title": "La montagne — Le son GN",
+    "level": 2,
+    "goal": "Articuler le son palatal 'GN'.",
+    "target_phonemes": ["ɲ"],
+    "tags": ["palatales", "gn"],
+    "sentences": [
+      "La ligne est sur l'oignon.",
+      "Le peigne est dans le panier.",
+      "Il gagne une petite vigne.",
+      "Le signe sur la montagne."
+    ]
+  }
+]
