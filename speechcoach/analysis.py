@@ -13,6 +13,8 @@ except Exception:
 from .config import DEFAULT_SAMPLE_RATE
 from .utils_text import normalize_text_fr
 
+import soundfile as sf
+
 def clamp(x, a, b):
     return max(a, min(b, x))
 
@@ -20,15 +22,24 @@ def cosine_similarity(a: "np.ndarray", b: "np.ndarray") -> float:
     denom = (np.linalg.norm(a) * np.linalg.norm(b)) + 1e-9
     return float(np.dot(a, b) / denom)
 
+def load_audio_strict(wav_path, target_sr):
+    y, sr = sf.read(wav_path, dtype="float32", always_2d=False)
+
+    # mono
+    if getattr(y, "ndim", 1) > 1:
+        y = np.mean(y, axis=1).astype("float32")
+
+    # resample si nécessaire
+    if sr != target_sr:
+        y = librosa.resample(y, orig_sr=sr, target_sr=target_sr).astype("float32")
+        sr = target_sr
+
+    return y, sr
+
 def extract_features(wav_path: str, start_sec: float = 0.0, end_sec: Optional[float] = None) -> Dict[str, Any]:
     if np is None or librosa is None:
         return {}
-    y, sr = librosa.load(
-        wav_path,
-        sr=DEFAULT_SAMPLE_RATE,
-        mono=True,
-        backend="soundfile"
-    )
+    y, sr = load_audio_strict(wav_path, DEFAULT_SAMPLE_RATE)
 
     if end_sec is None:
         end_sec = len(y) / sr

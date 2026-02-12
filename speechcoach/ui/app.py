@@ -1,4 +1,5 @@
 import tkinter as tk
+from speechcoach.game import GameState
 from tkinter import ttk, messagebox
 import threading
 
@@ -16,8 +17,9 @@ from speechcoach.game import GameController
 
 from .dialogs_children import ChildManagerDialog
 from .dialogs_dashboard import DashboardDialog
-from .dialogs_audio import AudioSettingsDialog
 from .panels_analysis import AnalysisPanel
+from speechcoach.ui.audio_settings import AudioSettingsDialog
+
 
 class SpeechCoachApp(tk.Tk):
     def __init__(self):
@@ -57,6 +59,12 @@ class SpeechCoachApp(tk.Tk):
         self.set_status(f"Prêt. Stories={n} | JSON={stories_path} | DB={db_path}")
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+    
+    def open_audio_settings(self):
+        """
+        Open TTS / audio settings dialog.
+        """
+        AudioSettingsDialog(self, self.audio)
 
     def _build_menu(self):
         menubar = tk.Menu(self)
@@ -78,6 +86,11 @@ class SpeechCoachApp(tk.Tk):
         m_help = tk.Menu(menubar, tearoff=0)
         m_help.add_command(label="À propos", command=lambda: messagebox.showinfo("À propos", f"{APP_NAME}\n{APP_VERSION}"))
         menubar.add_cascade(label="Aide", menu=m_help)
+        options_menu = tk.Menu(menubar, tearoff=0)
+        options_menu.add_command(label="Réglages audio", command=self.open_audio_settings)
+
+        menubar.add_cascade(label="Options", menu=options_menu)
+
 
         self.config(menu=menubar)
 
@@ -191,7 +204,9 @@ class SpeechCoachApp(tk.Tk):
 
     def toggle_pause(self):
         self.game.toggle_pause()
-        self.btn_pause.config(text="▶️ Reprendre" if self.game.paused else "⏸️ Pause")
+        self.btn_pause.config(
+            text="▶️ Reprendre" if self.game.state == GameState.PAUSED else "⏸️ Pause"
+        )
 
     def replay_phrase(self):
         self.game.replay_last()
