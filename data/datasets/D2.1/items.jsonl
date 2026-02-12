@@ -1,0 +1,2 @@
+{"id":"G001","wav":"data/recordings/g001.wav","expected":"papa","target_word":"papa","phoneme_target":"p"}
+{"id":"G002","wav":"data/recordings/g002.wav","expected":"crocodile","target_word":"crocodile","phoneme_target":"kr"}

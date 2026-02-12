@@ -23,7 +23,13 @@ def cosine_similarity(a: "np.ndarray", b: "np.ndarray") -> float:
 def extract_features(wav_path: str, start_sec: float = 0.0, end_sec: Optional[float] = None) -> Dict[str, Any]:
     if np is None or librosa is None:
         return {}
-    y, sr = librosa.load(wav_path, sr=DEFAULT_SAMPLE_RATE, mono=True)
+    y, sr = librosa.load(
+        wav_path,
+        sr=DEFAULT_SAMPLE_RATE,
+        mono=True,
+        backend="soundfile"
+    )
+
     if end_sec is None:
         end_sec = len(y) / sr
     a = int(clamp(start_sec, 0, 1e9) * sr)

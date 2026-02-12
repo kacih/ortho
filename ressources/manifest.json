@@ -1,0 +1,34 @@
+{
+  "product": {
+    "name": "Speech Coach",
+    "app_version": "7.6.0",
+    "channel": "stable",
+    "git": {
+      "commit": "abc1234",
+      "dirty": false
+    }
+  },
+  "evidence": {
+    "protocol_id": "P3",
+    "protocol_semver": "3.0.0",
+    "scoring_id": "S4",
+    "scoring_semver": "4.2.0",
+    "dataset_id": "D2.1",
+    "dataset_semver": "2.1.0",
+    "asr_engine": {
+      "name": "whisper-local",
+      "version": "1.6.0",
+      "language": "fr-FR"
+    },
+    "tts_engine": {
+      "name": "windows-powershell-tts",
+      "version": "1.0.0",
+      "voice": "fr-FR"
+    }
+  },
+  "compat": {
+    "exports_schema": "R1",
+    "min_readable_protocol": "P2",
+    "min_readable_dataset": "D2.0"
+  }
+}
