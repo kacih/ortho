@@ -59,6 +59,18 @@ ON reference_profiles(child_id, phoneme);
 
 CREATE INDEX IF NOT EXISTS idx_sessions_child_created
 ON sessions(child_id, created_at);
+
+-- Rewards / collections (one row per card owned)
+CREATE TABLE IF NOT EXISTS child_cards(
+  child_id INTEGER NOT NULL,
+  card_name TEXT NOT NULL,
+  obtained_at TEXT,
+  PRIMARY KEY(child_id, card_name),
+  FOREIGN KEY(child_id) REFERENCES children(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_child_cards_child
+ON child_cards(child_id);
 """
 
 def _column_exists(cur: sqlite3.Cursor, table: str, col: str) -> bool:
@@ -144,6 +156,41 @@ class DataLayer:
             else:
                 cur.execute("SELECT * FROM children ORDER BY id DESC")
             return cur.fetchall()
+
+    def get_child(self, child_id: int):
+        """Return a child row as a dict-like sqlite3.Row, or None."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT * FROM children WHERE id=?", (child_id,))
+            return cur.fetchone()
+
+    # --- rewards / collections
+    def list_child_cards(self, child_id: int) -> List[str]:
+        """Return all collected card names for a child."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT card_name FROM child_cards WHERE child_id=? ORDER BY datetime(REPLACE(obtained_at,'T',' ')) DESC",
+                (int(child_id),)
+            )
+            return [r[0] for r in cur.fetchall()]
+
+    def add_child_card(self, child_id: int, card_name: str) -> bool:
+        """Insert a card if not already owned. Returns True if inserted."""
+        if not card_name:
+            return False
+        with self.lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(
+                    "INSERT OR IGNORE INTO child_cards(child_id, card_name, obtained_at) VALUES(?,?,?)",
+                    (int(child_id), str(card_name).strip(), now_iso())
+                )
+                self.conn.commit()
+                return cur.rowcount > 0
+            except Exception:
+                return False
+
 
 
 

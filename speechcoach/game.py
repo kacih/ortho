@@ -59,6 +59,10 @@ class GameController:
 
         self.last_phrase: Optional[str] = None
 
+        # End-of-session metadata (used by UI for rewards / UX)
+        # Values: finished | stopped | error | idle
+        self.last_end_reason: str = "idle"
+
         # UI callbacks
         self.on_status = None
         self.on_sentence = None
@@ -85,6 +89,7 @@ class GameController:
 
         self.state = GameState.STARTING
         self._stop_event.clear()
+        self.last_end_reason = "idle"
 
         story = self.stories.pick()
         if story is None:
@@ -135,6 +140,7 @@ class GameController:
             for i in range(rounds):
 
                 if self._stop_event.is_set():
+                    self.last_end_reason = "stopped"
                     break
 
                 while self.state == GameState.PAUSED:
@@ -194,6 +200,7 @@ class GameController:
                     time.sleep(0.2)
 
                 if self._stop_event.is_set():
+                    self.last_end_reason = "stopped"
                     break
 
                 # Still too short after retries: skip this turn to avoid polluting DB/TDB
@@ -266,11 +273,16 @@ class GameController:
                 self._status(f"✅ Tour {i+1}/{rounds} terminé")
                 time.sleep(0.8)
 
+            # If we reached here without an explicit stop, it is a normal completion.
+            if self.last_end_reason != "stopped":
+                self.last_end_reason = "finished"
+
             self.state = GameState.FINISHED
             self._status("🎉 Fin du jeu")
             self.audio.tts.speak("Bravo ! Tu as fini. Super travail !")
 
         except Exception as e:
+            self.last_end_reason = "error"
             self._status(f"❌ Erreur: {e}")
 
         finally:
