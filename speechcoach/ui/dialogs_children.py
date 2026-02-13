@@ -76,7 +76,7 @@ class ChildManagerDialog(tk.Toplevel):
             # Robust avatar loading:
             # 1) Prefer binary stored in DB (stable)
             # 2) Fallback to avatar_path (best effort)
-            img = self._load_avatar_image_blob(avatar_blob) or self._load_avatar_image(avatar_path)
+            img = self._load_avatar_image_blob(avatar_blob) or self._default_avatar_image()
             created_h = self._fmt_created_at_fr(created_at)
             # IMPORTANT (Python 3.14 / Tk): pass -values as a *single* Tcl list string.
             # If a Python tuple/list is passed through, it may be expanded into multiple
@@ -174,7 +174,7 @@ class ChildManagerDialog(tk.Toplevel):
             "age": tk.StringVar(value=(str(row["age"]) if row and row["age"] is not None else "")),
             "sex": tk.StringVar(value=(row["sex"] if row else "")),
             "grade": tk.StringVar(value=(row["grade"] if row else "")),
-            "avatar": tk.StringVar(value=(row["avatar_path"] if row else "")),
+            "avatar": tk.StringVar(value=""),
         }
 
         frm = ttk.Frame(d)
@@ -219,14 +219,33 @@ class ChildManagerDialog(tk.Toplevel):
             "age": age_i,
             "sex": vars_["sex"].get().strip(),
             "grade": vars_["grade"].get().strip(),
-            "avatar_path": vars_["avatar"].get().strip(),
+            "avatar_file": vars_["avatar"].get().strip(),
         }
+
+    def _read_avatar_bytes(self, path: str):
+        p = (path or "").strip()
+        if not p:
+            return None
+        try:
+            if os.path.exists(p):
+                with open(p, "rb") as f:
+                    return f.read()
+        except Exception:
+            return None
+        return None
 
     def add_child(self):
         data = self._child_form("Ajouter un enfant")
         if not data:
             return
-        self.dl.add_child(**data)
+        avatar_bytes = self._read_avatar_bytes(data.pop("avatar_file", ""))
+        self.dl.add_child(
+            name=data["name"],
+            age=data.get("age"),
+            sex=data.get("sex",""),
+            grade=data.get("grade",""),
+            avatar_bytes=avatar_bytes,
+        )
         self.refresh()
 
     def edit_child(self):
@@ -239,7 +258,21 @@ class ChildManagerDialog(tk.Toplevel):
         data = self._child_form("Modifier un enfant", row=rows[0])
         if not data:
             return
-        self.dl.update_child(cid, **data)
+        avatar_bytes = self._read_avatar_bytes(data.pop("avatar_file", ""))
+        # If no avatar selected, keep existing blob (do not overwrite with NULL)
+        if avatar_bytes is None:
+            try:
+                avatar_bytes = rows[0]["avatar_blob"] if "avatar_blob" in rows[0].keys() else None
+            except Exception:
+                avatar_bytes = None
+        self.dl.update_child(
+            cid,
+            name=data["name"],
+            age=data.get("age"),
+            sex=data.get("sex",""),
+            grade=data.get("grade",""),
+            avatar_bytes=avatar_bytes,
+        )
         self.refresh()
 
     def delete_child(self):

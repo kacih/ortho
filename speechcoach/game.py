@@ -158,7 +158,16 @@ class GameController:
 
                 # ---- RECORD
                 self.state = GameState.LISTENING
-                self._status("🎙️ À toi !")
+                try:
+                    # Kid-friendly prompt
+                    threading.Thread(
+                        target=lambda: self.audio.tts.speak_child_prompt(style="warm"),
+                        daemon=True
+                    ).start()
+
+                except Exception:
+                    pass
+                self._status("🎙️ Prêt ? Répète la phrase quand tu veux !")
 
                 wav_path = os.path.join(
                     AUDIO_DIR,

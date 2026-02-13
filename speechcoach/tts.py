@@ -11,6 +11,20 @@ try:
 except Exception:
     pyttsx3 = None
 
+
+# Child-friendly TTS profiles (voice selection is best-effort because installed voices vary by system).
+CHILD_VOICE_PROFILES = {
+    "warm": {"rate_ps": 0, "volume": 100},
+    "gentle": {"rate_ps": -1, "volume": 100},
+    "energetic": {"rate_ps": 1, "volume": 100},
+}
+
+CHILD_PROMPTS = [
+    "Super ! Tu peux commencer à répéter.",
+    "À toi de jouer, répète la phrase.",
+    "C'est parti ! Répète doucement la phrase.",
+    "Bravo, on y va ! Tu peux répéter maintenant.",
+]
 log = logging.getLogger(__name__)
 
 
@@ -169,6 +183,24 @@ class TTSEngine:
 
     def warmup(self):
         self.speak(" ")
+
+    def speak_child(self, text: str, style: str = "warm"):
+        """Speak with kid-friendly settings (best-effort across Windows voices)."""
+        prof = CHILD_VOICE_PROFILES.get(style, CHILD_VOICE_PROFILES["warm"])
+        # PowerShell path uses SpeechSynthesizer.Rate (-10..10). We'll map gently around 0.
+        rate_ps = int(prof.get("rate_ps", 0))
+        vol = int(prof.get("volume", self.volume))
+        # We keep the configured voice if any; voice choice is user/system dependent.
+        if self._is_windows:
+            with self._lock:
+                _speak_powershell(text, self.voice, rate_ps, vol)
+        else:
+            # fallback
+            self.speak(text)
+
+    def speak_child_prompt(self, style: str = "warm"):
+        import random
+        self.speak_child(random.choice(CHILD_PROMPTS), style=style)
 
     def apply_settings(self, settings: Dict[str, Any]):
         """
