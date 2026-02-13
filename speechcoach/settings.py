@@ -9,6 +9,9 @@ DEFAULT_SETTINGS = {
     "tts_rate": 1.0,     # 0.5 → 1.5
     "tts_volume": 1.0,   # 0.0 → 1.0
     "tts_backend": "system",  # system | edge
+    "last_plan_json": "",
+    "last_plan_name": "",
+    "last_plan_mode": "",
 }
 
 
@@ -33,7 +36,10 @@ class SettingsManager:
                     tts_voice TEXT,
                     tts_rate REAL,
                     tts_volume REAL,
-                    tts_backend TEXT
+                    tts_backend TEXT,
+                    last_plan_json TEXT,
+                    last_plan_name TEXT,
+                    last_plan_mode TEXT
                 )
                 """
             )
@@ -42,18 +48,28 @@ class SettingsManager:
                 cols = [r[1] for r in con.execute("PRAGMA table_info(user_settings)").fetchall()]
                 if "tts_backend" not in cols:
                     con.execute("ALTER TABLE user_settings ADD COLUMN tts_backend TEXT")
+
+                if "last_plan_json" not in cols:
+                    con.execute("ALTER TABLE user_settings ADD COLUMN last_plan_json TEXT")
+                if "last_plan_name" not in cols:
+                    con.execute("ALTER TABLE user_settings ADD COLUMN last_plan_name TEXT")
+                if "last_plan_mode" not in cols:
+                    con.execute("ALTER TABLE user_settings ADD COLUMN last_plan_mode TEXT")
             except Exception:
                 pass
 
             con.execute(
                 """INSERT OR IGNORE INTO user_settings
-                    (id, tts_voice, tts_rate, tts_volume, tts_backend)
-                    VALUES (1, ?, ?, ?, ?)""",
+                    (id, tts_voice, tts_rate, tts_volume, tts_backend, last_plan_json, last_plan_name, last_plan_mode)
+                    VALUES (1, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     DEFAULT_SETTINGS["tts_voice"],
                     DEFAULT_SETTINGS["tts_rate"],
                     DEFAULT_SETTINGS["tts_volume"],
                     DEFAULT_SETTINGS["tts_backend"],
+                    DEFAULT_SETTINGS["last_plan_json"],
+                    DEFAULT_SETTINGS["last_plan_name"],
+                    DEFAULT_SETTINGS["last_plan_mode"],
                 ),
             )
             con.commit()
@@ -79,12 +95,15 @@ class SettingsManager:
         rate = float(s.get("tts_rate", DEFAULT_SETTINGS["tts_rate"]))
         volume = float(s.get("tts_volume", DEFAULT_SETTINGS["tts_volume"]))
         backend = (s.get("tts_backend", DEFAULT_SETTINGS["tts_backend"]) or "system").strip()
+        last_plan_json = s.get("last_plan_json", DEFAULT_SETTINGS["last_plan_json"]) or ""
+        last_plan_name = s.get("last_plan_name", DEFAULT_SETTINGS["last_plan_name"]) or ""
+        last_plan_mode = s.get("last_plan_mode", DEFAULT_SETTINGS["last_plan_mode"]) or ""
 
         with self._connect() as con:
             con.execute(
                 """UPDATE user_settings
-                   SET tts_voice=?, tts_rate=?, tts_volume=?, tts_backend=?
+                   SET tts_voice=?, tts_rate=?, tts_volume=?, tts_backend=?, last_plan_json=?, last_plan_name=?, last_plan_mode=?
                    WHERE id=1""",
-                (voice, rate, volume, backend),
+                (voice, rate, volume, backend, last_plan_json, last_plan_name, last_plan_mode),
             )
             con.commit()

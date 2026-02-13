@@ -42,6 +42,12 @@ CREATE TABLE IF NOT EXISTS sessions(
   focus_start_sec REAL,
   focus_end_sec REAL,
 
+  -- Sprint 1: session plan metadata
+  plan_id TEXT,
+  plan_name TEXT,
+  plan_mode TEXT,
+  plan_json TEXT,
+
   FOREIGN KEY(child_id) REFERENCES children(id)
 );
 
@@ -106,6 +112,31 @@ CREATE TABLE IF NOT EXISTS child_cards_v2(
 CREATE INDEX IF NOT EXISTS idx_child_cards_v2_child
 ON child_cards_v2(child_id);
 
+
+-- Sprint 2: user session plans (presets) ------------------------------------
+CREATE TABLE IF NOT EXISTS session_plans(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  plan_json TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_session_plans_name ON session_plans(name);
+
+-- Sprint 2: session run summary (session-level metadata) --------------------
+CREATE TABLE IF NOT EXISTS session_runs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  created_at TEXT NOT NULL,
+  child_id INTEGER NOT NULL,
+  plan_json TEXT NOT NULL,
+  planned_items INTEGER,
+  completed_items INTEGER,
+  ended_early INTEGER DEFAULT 0,
+  early_end_reason TEXT DEFAULT '',
+  FOREIGN KEY(child_id) REFERENCES children(id)
+);
+CREATE INDEX IF NOT EXISTS idx_session_runs_child_created
+ON session_runs(child_id, created_at);
 """
 
 def _column_exists(cur: sqlite3.Cursor, table: str, col: str) -> bool:
@@ -117,6 +148,21 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     cur.executescript(DDL)
 
     
+
+
+    # ---- Ensure sessions plan columns exist (Sprint 1)
+    try:
+        if not _column_exists(cur, "sessions", "plan_id"):
+            cur.execute("ALTER TABLE sessions ADD COLUMN plan_id TEXT")
+        if not _column_exists(cur, "sessions", "plan_name"):
+            cur.execute("ALTER TABLE sessions ADD COLUMN plan_name TEXT")
+        if not _column_exists(cur, "sessions", "plan_mode"):
+            cur.execute("ALTER TABLE sessions ADD COLUMN plan_mode TEXT")
+        if not _column_exists(cur, "sessions", "plan_json"):
+            cur.execute("ALTER TABLE sessions ADD COLUMN plan_json TEXT")
+    except Exception:
+        pass
+
     # ---- Ensure child_cards_v2 snapshot columns exist (tolerant migrations)
     try:
         if not _column_exists(cur, "child_cards_v2", "card_name"):
@@ -485,7 +531,8 @@ class DataLayer:
             "expected_text","recognized_text","wer","audio_path","duration_sec",
             "phoneme_target","spectral_centroid_hz","phoneme_quality",
             "features_json","acoustic_score","acoustic_contrast","final_score",
-            "phoneme_confidence","focus_start_sec","focus_end_sec"
+            "phoneme_confidence","focus_start_sec","focus_end_sec",
+            "plan_id","plan_name","plan_mode","plan_json"
         ]
         values = [s.get(c) for c in cols]
         with self.lock:
@@ -496,6 +543,73 @@ class DataLayer:
             )
             self.conn.commit()
             return cur.lastrowid
+
+    
+
+    
+    # --- session plans (Sprint 2)
+    def list_session_plans(self) -> List[sqlite3.Row]:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT id, name, plan_json, created_at, updated_at FROM session_plans ORDER BY datetime(REPLACE(updated_at,'T',' ')) DESC, id DESC"
+            )
+            return cur.fetchall()
+
+    def save_session_plan(self, name: str, plan: Dict[str, Any]) -> int:
+        """Insert a user preset plan. Returns plan id."""
+        nm = (name or "").strip()
+        if not nm:
+            raise ValueError("Plan name is required")
+        pj = json.dumps(plan, ensure_ascii=False)
+        ts = now_iso()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "INSERT INTO session_plans(name, plan_json, created_at, updated_at) VALUES(?,?,?,?)",
+                (nm, pj, ts, ts)
+            )
+            self.conn.commit()
+            return cur.lastrowid
+
+    def delete_session_plan(self, plan_id: int) -> None:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("DELETE FROM session_plans WHERE id=?", (int(plan_id),))
+            self.conn.commit()
+
+    def get_session_plan(self, plan_id: int) -> Optional[Dict[str, Any]]:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT plan_json FROM session_plans WHERE id=?", (int(plan_id),))
+            row = cur.fetchone()
+            if not row:
+                return None
+            try:
+                return json.loads(row[0])
+            except Exception:
+                return None
+
+    # --- session run summary (Sprint 2)
+    def create_session_run(self, child_id: int, plan: Dict[str, Any], planned_items: int) -> int:
+        pj = json.dumps(plan, ensure_ascii=False)
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "INSERT INTO session_runs(created_at, child_id, plan_json, planned_items, completed_items, ended_early, early_end_reason) VALUES(?,?,?,?,?,?,?)",
+                (now_iso(), int(child_id), pj, int(planned_items), 0, 0, "")
+            )
+            self.conn.commit()
+            return cur.lastrowid
+
+    def finish_session_run(self, run_id: int, completed_items: int, ended_early: bool, reason: str = "") -> None:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "UPDATE session_runs SET completed_items=?, ended_early=?, early_end_reason=? WHERE id=?",
+                (int(completed_items), 1 if ended_early else 0, (reason or ""), int(run_id))
+            )
+            self.conn.commit()
 
     def fetch_sessions_filtered(self, child_id: Optional[int]=None, phoneme_target: Optional[str]=None, limit: int=500):
         with self.lock:

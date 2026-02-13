@@ -5,12 +5,17 @@ import subprocess
 import threading
 import queue
 import logging
-logger = logging.getLogger("speechcoach.tts")
 from typing import Optional, Dict, Any, List
+
+import soundfile as sf
+import sounddevice as sd
+
+logger = logging.getLogger("speechcoach.tts")
+log = logging.getLogger(__name__)
 
 # pyttsx3 optionnel (instable selon Python/Win). Conservé mais OFF par défaut.
 try:
-    import pyttsx3
+    import pyttsx3  # type: ignore
 except Exception:
     pyttsx3 = None
 
@@ -30,7 +35,6 @@ CHILD_PROMPTS = [
     "Génial ! Vas-y doucement, répète la phrase.",
     "Bravo ! On y va : tu peux répéter maintenant.",
 ]
-log = logging.getLogger(__name__)
 
 
 def _xml_escape(s: str) -> str:
@@ -77,6 +81,7 @@ def list_voices() -> List[str]:
         log.exception("list_voices failed")
         return []
 
+
 def list_edge_voices(locale_prefix: str = "fr-") -> List[str]:
     """Return available Edge Neural voices (best-effort).
     Non-blocking philosophy: on any error, return [].
@@ -89,7 +94,7 @@ def list_edge_voices(locale_prefix: str = "fr-") -> List[str]:
 
     async def _run():
         vs = await edge_tts.list_voices()
-        out = []
+        out: List[str] = []
         for v in vs or []:
             name = v.get("ShortName") or v.get("Name")
             locale = v.get("Locale") or ""
@@ -103,32 +108,10 @@ def list_edge_voices(locale_prefix: str = "fr-") -> List[str]:
         return []
 
 
-
-
-def _play_wav_powershell(path: str) -> None:
-    if platform.system().lower() != "windows":
-        return
-    if not path:
-        return
-    ps = f"""
-    try {{
-      Add-Type -AssemblyName System.Windows.Forms | Out-Null
-      $p = '{path}'.Replace('\\','/')
-      $sp = New-Object System.Media.SoundPlayer($p)
-      $sp.PlaySync()
-    }} catch {{}}
+def _speak_edge_tts_to_mp3(text: str, voice: str, out_path: str, timeout_sec: int = 30) -> bool:
     """
-    try:
-        _ps_run(ps)
-    except Exception:
-        pass
-
-
-def _speak_edge_tts_to_wav(text: str, voice: str, out_path: str) -> bool:
-    """Best-effort Edge Neural TTS (non-blocking: caller falls back if False).
-
-    We intentionally use the edge-tts CLI via subprocess because the Python API
-    varies across versions. CLI supports --format for RIFF PCM (wav) output.
+    Edge Neural TTS via CLI, MP3 output (edge-tts 7.2.7 compatible).
+    Returns True only if the output file exists and is non-empty.
     """
     try:
         import sys
@@ -146,6 +129,7 @@ def _speak_edge_tts_to_wav(text: str, voice: str, out_path: str) -> bool:
         if out_dir:
             os.makedirs(out_dir, exist_ok=True)
 
+        # IMPORTANT: edge-tts 7.2.7 CLI does NOT support --format
         cmd = [
             sys.executable,
             "-m",
@@ -156,95 +140,44 @@ def _speak_edge_tts_to_wav(text: str, voice: str, out_path: str) -> bool:
             text,
             "--write-media",
             out_path,
-            "--format",
-            "riff-24khz-16bit-mono-pcm",
         ]
 
-        logger.info("EDGE speak start voice=%s text_len=%s out=%s", voice, len(text), out_path)
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        logger.info("EDGE mp3 start voice=%s text_len=%s out=%s", voice, len(text), out_path)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout_sec)
 
         if p.returncode != 0:
-            logger.warning("EDGE speak failed rc=%s stderr=%s", p.returncode, (p.stderr or "").strip())
+            logger.warning("EDGE mp3 failed rc=%s stderr=%s", p.returncode, (p.stderr or "").strip())
             return False
 
         ok = os.path.exists(out_path) and os.path.getsize(out_path) > 0
-        logger.info("EDGE speak done ok=%s size=%s", ok, os.path.getsize(out_path) if os.path.exists(out_path) else 0)
+        logger.info(
+            "EDGE mp3 done ok=%s size=%s",
+            ok,
+            os.path.getsize(out_path) if os.path.exists(out_path) else 0,
+        )
         return ok
     except Exception as e:
-        logger.exception("EDGE speak exception: %s", e)
+        logger.exception("EDGE mp3 exception: %s", e)
         return False
-
-    text = (text or "").strip()
-    if not text:
-        return False
-
-    async def _run():
-        communicate = edge_tts.Communicate(
-            text,
-            voice=voice or "fr-FR-DeniseNeural",
-            rate="+0%",
-            volume="+0%",
-        )
-        # Produce WAV (riff) so SoundPlayer can play it directly
-        await communicate.save(out_path, output_format="riff-24khz-16bit-mono-pcm")
-
-    try:
-        asyncio.run(_run())
-        return os.path.exists(out_path)
-    except Exception:
-        return False
-
-def speak(text: str, settings: Optional[Dict[str, Any]] = None, async_: bool = True) -> None:
-    """
-    Convenience function for UI usage.
-    settings:
-      - tts_voice  (str)
-      - tts_rate   (float 0.5..1.5)  # 1.0 = normal
-      - tts_volume (float 0.0..1.0)
-    """
-    if not text or not text.strip():
-        return
-
-    settings = settings or {}
-    voice = settings.get("tts_voice") or None
-    rate_f = float(settings.get("tts_rate", 1.0))
-    vol_f = float(settings.get("tts_volume", 1.0))
-
-    # Map [0.5..1.5] to PowerShell Rate [-10..10]
-    # 1.0 -> 0 ; 0.5 -> -5 ; 1.5 -> +5
-    rate = int(max(-10, min(10, (rate_f - 1.0) * 10)))
-    volume = int(max(0, min(100, vol_f * 100)))
-
-    def _job():
-        _speak_powershell(text=text, voice=voice, rate=rate, volume=volume)
-
-    if async_:
-        threading.Thread(target=_job, daemon=True).start()
-    else:
-        _job()
 
 
 def _speak_powershell(text: str, voice: Optional[str], rate: int, volume: int) -> None:
     if platform.system().lower() != "windows":
         return
 
-    # articulation
     text = (text or "").strip()
     if not text:
         return
+
+    # articulation
     text = text.replace(".", ". ").replace(",", ", ").replace(";", "; ")
 
-    # NOTE UX: certains périphériques "réveillent" la sortie audio et mangent
-    # les premières lettres. On fait un "wake" explicite (silence SSML), puis
-    # on parle le texte (avec un léger break). C'est volontairement un peu
-    # conservateur: mieux vaut 200ms de latence que des syllabes tronquées.
     wake_ms = 250
     pre_ms = 180
     ssml_text = _xml_escape(text)
     ssml_wake = f"<speak version='1.0' xml:lang='fr-FR'><break time='{wake_ms}ms'/></speak>"
     ssml_main = f"<speak version='1.0' xml:lang='fr-FR'><break time='{pre_ms}ms'/>{ssml_text}</speak>"
 
-    # Escape for PowerShell double-quoted string
     safe_wake = ssml_wake.replace("\\", "\\\\").replace('"', '`"')
     safe_main = ssml_main.replace("\\", "\\\\").replace('"', '`"')
 
@@ -276,25 +209,29 @@ class TTSEngine:
     Interface TTS historique du projet (compat audio.py).
     - Windows stable: PowerShell System.Speech (default)
     - Optionnel: pyttsx3
+    - Optionnel: Edge Neural via edge-tts CLI (MP3) + soundfile+sounddevice playback
     """
 
     def __init__(self):
-        # Historique: rate ~ 150 (pyttsx3) ; on garde
-        self.rate = 150                 # "WPM-like" for pyttsx3 path
-        self.voice: Optional[str] = None
-        self.volume = 100               # 0..100 for PowerShell path
+        self.rate = 150  # legacy
+        self.voice: Optional[str] = None  # system voice name
+        self.volume = 100  # 0..100
         self.use_pyttsx3 = False
-        self.backend = "system"  # system | edge
+
+        # backends: "system" | "edge"
+        self.backend = "system"
         self.edge_voice = "fr-FR-DeniseNeural"
+
         self._lock = threading.Lock()
         self._is_windows = platform.system().lower() == "windows"
         self._pytts = None
 
-        # ---- Serial TTS queue (ensures ordered prompts)
+        # Serial TTS queue (ensures ordered prompts)
         self._tts_queue: "queue.Queue[tuple]" = queue.Queue()
         self._tts_worker = threading.Thread(target=self._tts_loop, daemon=True)
         self._tts_worker.start()
 
+    # ---------- basic settings ----------
     def set_rate(self, rate: int):
         self.rate = int(rate)
 
@@ -312,6 +249,7 @@ class TTSEngine:
     def warmup(self):
         self.speak(" ")
 
+    # ---------- queue helpers ----------
     def say(self, text: str, *, block: bool = False):
         """Queue a TTS utterance (serialized). If block=True, wait until spoken."""
         ev = threading.Event()
@@ -342,7 +280,6 @@ class TTSEngine:
                 elif kind == "child_prompt":
                     self.speak_child_prompt(style=style or "warm")
             except Exception:
-                # Never let TTS break the app
                 pass
             finally:
                 try:
@@ -350,78 +287,106 @@ class TTSEngine:
                 except Exception:
                     pass
 
+    # ---------- playback helpers ----------
+    def _play_audio_file(self, path: str) -> bool:
+        """Play an audio file (mp3/wav/...) using soundfile + sounddevice."""
+        try:
+            data, sr = sf.read(path, dtype="float32")
+            sd.play(data, sr)
+            sd.wait()
+            logger.info("PLAY ok path=%s sr=%s frames=%s", path, sr, getattr(data, "shape", None))
+            return True
+        except Exception as e:
+            logger.warning("PLAY failed path=%s err=%s", path, e)
+            return False
+
+    def _speak_edge_mp3(self, text: str) -> bool:
+        """Generate Edge mp3 and play it. Returns True if spoken."""
+        try:
+            from pathlib import Path
+            from .config import AUDIO_DIR
+        except Exception:
+            return False
+
+        try:
+            Path(AUDIO_DIR).mkdir(parents=True, exist_ok=True)
+            out_path = str(Path(AUDIO_DIR) / "edge_tts_tmp.mp3")
+            ok = _speak_edge_tts_to_mp3(text, self.edge_voice, out_path)
+            if not ok:
+                return False
+            return self._play_audio_file(out_path)
+        except Exception as e:
+            logger.warning("EDGE mp3 pipeline failed: %s", e)
+            return False
+
+    # ---------- child speech ----------
     def speak_child(self, text: str, style: str = "warm"):
-        """Speak with kid-friendly settings (best-effort across Windows voices)."""
         prof = CHILD_VOICE_PROFILES.get(style, CHILD_VOICE_PROFILES["warm"])
-        # PowerShell path uses SpeechSynthesizer.Rate (-10..10). We'll map gently around 0.
         rate_ps = int(prof.get("rate_ps", 0))
         vol = int(prof.get("volume", self.volume))
 
-        if (getattr(self, "backend", "system") or "system") == "edge":
-            try:
-                from pathlib import Path
-                from .config import AUDIO_DIR
-                Path(AUDIO_DIR).mkdir(parents=True, exist_ok=True)
-                out_path = str(Path(AUDIO_DIR) / "edge_tts_tmp.wav")
-                ok = _speak_edge_tts_to_wav(' ' + text, getattr(self, "edge_voice", "fr-FR-DeniseNeural"), out_path)
-                if ok:
-                    _play_wav_powershell(out_path)
-                    return
-            except Exception:
-                pass
+        text = (text or "").strip()
+        if not text:
+            return
 
-        # We keep the configured voice if any; voice choice is user/system dependent.
+        if (self.backend or "system") == "edge":
+            # edge path must never break the app
+            if self._speak_edge_mp3(" " + text):
+                return
+            logger.info("EDGE child fallback to system")
+
         if self._is_windows:
             with self._lock:
-                _speak_powershell(' ' + text, self.voice, rate_ps, vol)
+                _speak_powershell(" " + text, self.voice, rate_ps, vol)
         else:
-            # fallback
             self.speak(text)
 
     def speak_child_prompt(self, style: str = "warm"):
         import random
         self.speak_child(random.choice(CHILD_PROMPTS), style=style)
 
+    # ---------- settings integration ----------
     def apply_settings(self, settings: Dict[str, Any]):
         """
         Accept settings dict from SettingsManager.
-        - tts_voice: str
-        - tts_rate: float (0.5..1.5)
-        - tts_volume: float (0.0..1.0)
+        - tts_backend: "system" | "edge"
+        - tts_voice:   system voice name
+        - edge_voice:  edge shortname (e.g., fr-FR-DeniseNeural)
+        - tts_rate:    float (0.5..1.5)
+        - tts_volume:  float (0.0..1.0)
         """
         if not settings:
             return
+
         if "tts_backend" in settings:
             self.backend = (settings.get("tts_backend") or "system").strip()
+
+        # Important: tts_voice is SYSTEM voice. edge_voice is EDGE voice.
         if "tts_voice" in settings:
             self.set_voice(settings.get("tts_voice") or None)
+
+        if "edge_voice" in settings:
+            ev = (settings.get("edge_voice") or "").strip()
+            if ev:
+                self.edge_voice = ev
+
         if "tts_volume" in settings:
             self.set_volume(int(float(settings["tts_volume"]) * 100))
+
         if "tts_rate" in settings:
-            # Map factor -> approximate legacy rate integer
-            # 1.0 ~ 165 baseline, keep your previous mapping behavior
             factor = float(settings["tts_rate"])
             self.set_rate(int(165 + (factor - 1.0) * 30))
 
+    # ---------- main speak ----------
     def speak(self, text: str):
         text = (text or "").strip()
         if not text:
             return
-        # Optional Edge Neural TTS (must never be blocking): fallback to system voice on any failure.
-        if (getattr(self, "backend", "system") or "system") == "edge":
-            try:
-                import os
-                from pathlib import Path
-                from .config import AUDIO_DIR
-                Path(AUDIO_DIR).mkdir(parents=True, exist_ok=True)
-                out_path = str(Path(AUDIO_DIR) / "edge_tts_tmp.wav")
-                ok = _speak_edge_tts_to_wav(text, getattr(self, "edge_voice", "fr-FR-DeniseNeural"), out_path)
-                if ok:
-                    _play_wav_powershell(out_path)
-                    return
-            except Exception:
-                pass
 
+        if (self.backend or "system") == "edge":
+            if self._speak_edge_mp3(text):
+                return
+            logger.info("EDGE fallback to system")
 
         # articulation
         text = text.replace(".", ". ").replace(",", ", ").replace(";", "; ")
@@ -432,7 +397,6 @@ class TTSEngine:
                 if eng is not None:
                     try:
                         eng.setProperty("rate", self.rate)
-                        # volume in pyttsx3 is 0.0..1.0
                         eng.setProperty("volume", max(0.0, min(1.0, self.volume / 100.0)))
                         if self.voice:
                             try:
@@ -446,7 +410,6 @@ class TTSEngine:
                     except Exception:
                         self._pytts = None
 
-            # fallback stable (Windows PowerShell)
             self._speak_powershell_legacy(text)
 
     def _ensure_pyttsx3(self):
@@ -472,13 +435,33 @@ class TTSEngine:
     def _speak_powershell_legacy(self, text: str):
         if not self._is_windows:
             return
-
-        # Historique : mapping rate int -> [-10..10]
         r = max(-10, min(10, int((self.rate - 165) / 15)))
+        _speak_powershell(text=text, voice=self.voice, rate=r, volume=self.volume)
 
-        _speak_powershell(
-            text=text,
-            voice=self.voice,
-            rate=r,
-            volume=self.volume
-        )
+
+def speak(text: str, settings: Optional[Dict[str, Any]] = None, async_: bool = True) -> None:
+    """
+    Convenience function for UI usage.
+    settings:
+      - tts_voice  (str)
+      - tts_rate   (float 0.5..1.5)  # 1.0 = normal
+      - tts_volume (float 0.0..1.0)
+    """
+    if not text or not text.strip():
+        return
+
+    settings = settings or {}
+    voice = settings.get("tts_voice") or None
+    rate_f = float(settings.get("tts_rate", 1.0))
+    vol_f = float(settings.get("tts_volume", 1.0))
+
+    rate = int(max(-10, min(10, (rate_f - 1.0) * 10)))
+    volume = int(max(0, min(100, vol_f * 100)))
+
+    def _job():
+        _speak_powershell(text=text, voice=voice, rate=rate, volume=volume)
+
+    if async_:
+        threading.Thread(target=_job, daemon=True).start()
+    else:
+        _job()
