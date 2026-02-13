@@ -528,7 +528,10 @@ class SpeechCoachApp(tk.Tk):
                 cid = int(r['id'])
             except Exception:
                 continue
-            name = r.get('name', '')
+            try:
+                name = r['name']
+            except Exception:
+                name = ''
             key = f"{name} (id={cid})"
             keys.append(key)
             children.append({'id': cid, 'name': name, 'key': key})
