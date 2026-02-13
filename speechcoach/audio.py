@@ -36,6 +36,20 @@ class AudioEngine:
             except Exception:
                 pass
 
+    def play_file(self, path: str):
+        """Backward-compatible wrapper for audio playback."""
+        if not path:
+            return
+        # selon votre implémentation existante :
+        if hasattr(self, "play_wav"):
+            return self.play_wav(path)
+        if hasattr(self, "play_audio_path"):
+            return self.play_audio_path(path)
+        # dernier recours : si vous avez une méthode générique play()
+        if hasattr(self, "play"):
+            return self.play(path)
+        raise AttributeError("No playback method available (play_wav/play_audio_path/play).")
+
     def list_input_devices(self) -> List[Tuple[int, str]]:
         if sd is None:
             return []

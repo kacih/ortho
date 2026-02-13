@@ -159,12 +159,8 @@ class GameController:
                 # ---- RECORD
                 self.state = GameState.LISTENING
                 try:
-                    # Kid-friendly prompt
-                    threading.Thread(
-                        target=lambda: self.audio.tts.speak_child_prompt(style="warm"),
-                        daemon=True
-                    ).start()
-
+                    # Kid-friendly prompt (serialized, no overlap)
+                    self.audio.tts.say_child_prompt(style="warm", block=True)
                 except Exception:
                     pass
                 self._status("🎙️ Prêt ? Répète la phrase quand tu veux !")

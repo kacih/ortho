@@ -2,7 +2,6 @@ import json
 import os
 import sqlite3
 import threading
-from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .utils_text import now_iso
@@ -72,10 +71,8 @@ def migrate_db(conn: sqlite3.Connection) -> None:
 
     add_cols = [
         # Children schema upgrades (older DBs might miss these)
-        ("children", "avatar_blob", "BLOB"),
+                ("children", "avatar_blob", "BLOB"),
         ("children", "created_at", "TEXT"),
-        # Sessions upgrades / repairs
-        ("sessions", "audio_path", "TEXT"),
         ("sessions", "features_json", "TEXT"),
         ("sessions", "acoustic_score", "REAL"),
         ("sessions", "acoustic_contrast", "REAL"),
@@ -120,95 +117,16 @@ class DataLayer:
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.Lock()
+        migrate_db(self.conn)
     def get_audio_path_by_session_id(self, session_id: int) -> str | None:
-        """Return the audio file path for a session.
-
-        Robust to legacy / manually-edited DB schemas:
-        - If sessions.audio_path exists and is filled -> return it.
-        - If missing/NULL -> best-effort search on disk using created_at / child_id / story_id.
-          If found, we also persist it back into sessions.audio_path (if column exists).
-        """
         with self.lock:
             cur = self.conn.cursor()
-
-            audio_path = None
-            try:
-                if _column_exists(cur, "sessions", "audio_path"):
-                    cur.execute("SELECT audio_path FROM sessions WHERE id = ?", (session_id,))
-                    row = cur.fetchone()
-                    audio_path = row[0] if row else None
-            except Exception:
-                audio_path = None
-
-            if audio_path:
-                return audio_path
-
-            # Fallback: try to infer from other fields and on-disk filenames
-            try:
-                cur.execute(
-                    "SELECT created_at, child_id, story_id, sentence_index FROM sessions WHERE id = ?",
-                    (session_id,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return None
-                created_at, child_id, story_id, sentence_index = row[0], row[1], row[2], row[3]
-            except Exception:
-                return None
-
-            # Build a timestamp token often present in filenames: YYYYMMDD_HHMMSS
-            token = None
-            try:
-                s = str(created_at).strip()
-                # Accept ISO with 'T' or space
-                dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-                token = dt.strftime("%Y%m%d_%H%M%S")
-            except Exception:
-                token = None
-
-            data_dir = os.path.dirname(os.path.abspath(self.db_path))
-            candidates = []
-            for sub in ("recordings", "audio_sessions"):
-                base = os.path.join(data_dir, sub)
-                if not os.path.isdir(base):
-                    continue
-                # Prefer token search (most precise)
-                if token:
-                    patterns = [
-                        f"*{token}*.wav",
-                        f"*{token}*.flac",
-                    ]
-                else:
-                    patterns = ["*.wav", "*.flac"]
-
-                import glob
-                for pat in patterns:
-                    for p in glob.glob(os.path.join(base, pat)):
-                        fn = os.path.basename(p).lower()
-                        # Heuristics: match child and optionally story id
-                        ok = True
-                        if child_id is not None:
-                            ok = ok and (f"child{int(child_id)}_" in fn or fn.startswith(f"{int(child_id)}_"))
-                        if story_id:
-                            ok = ok and (str(story_id).lower() in fn)
-                        if ok:
-                            candidates.append(p)
-
-            best = None
-            if candidates:
-                try:
-                    best = max(candidates, key=lambda p: os.path.getmtime(p))
-                except Exception:
-                    best = candidates[-1]
-
-            if best and _column_exists(cur, "sessions", "audio_path"):
-                try:
-                    cur.execute("UPDATE sessions SET audio_path=? WHERE id=?", (best, session_id))
-                    self.conn.commit()
-                except Exception:
-                    pass
-
-            return best
+            cur.execute(
+                "SELECT audio_path FROM sessions WHERE id = ?",
+                (session_id,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
     def close(self):
         try:
@@ -226,6 +144,25 @@ class DataLayer:
             else:
                 cur.execute("SELECT * FROM children ORDER BY id DESC")
             return cur.fetchall()
+
+
+
+    def list_distinct_phonemes(self, child_id: Optional[int]=None, limit: int=50) -> List[str]:
+        """Return distinct phoneme_target values (empty/NULL excluded), optionally filtered by child."""
+        with self.lock:
+            cur = self.conn.cursor()
+            if child_id:
+                cur.execute(
+                    "SELECT DISTINCT COALESCE(phoneme_target,'') AS p FROM sessions WHERE child_id=? ORDER BY p LIMIT ?",
+                    (child_id, limit)
+                )
+            else:
+                cur.execute(
+                    "SELECT DISTINCT COALESCE(phoneme_target,'') AS p FROM sessions ORDER BY p LIMIT ?",
+                    (limit,)
+                )
+            return [r[0] for r in cur.fetchall() if r[0] is not None]
+
 
     def add_child(self, name: str, age: Optional[int], sex: str, grade: str, avatar_bytes: Optional[bytes]=None) -> int:
         """Create a child profile.
@@ -289,18 +226,25 @@ class DataLayer:
             self.conn.commit()
             return cur.lastrowid
 
-    def fetch_sessions_filtered(self, child_id: Optional[int]=None, limit: int=500):
+    def fetch_sessions_filtered(self, child_id: Optional[int]=None, phoneme_target: Optional[str]=None, limit: int=500):
         with self.lock:
             cur = self.conn.cursor()
             order = "ORDER BY datetime(REPLACE(created_at,'T',' ')) DESC, id DESC"
+
+            clauses = []
+            params = []
             if child_id:
-                cur.execute(
-                    f"SELECT * FROM sessions WHERE child_id=? {order} LIMIT ?",
-                    (child_id, limit)
-                )
-            else:
-                cur.execute(f"SELECT * FROM sessions {order} LIMIT ?", (limit,))
+                clauses.append("child_id=?")
+                params.append(child_id)
+            if phoneme_target and phoneme_target != "__ALL__":
+                clauses.append("COALESCE(phoneme_target,'')=?")
+                params.append(phoneme_target)
+
+            where = ("WHERE " + " AND ".join(clauses) + " ") if clauses else ""
+            params.append(limit)
+            cur.execute(f"SELECT * FROM sessions {where}{order} LIMIT ?", tuple(params))
             return cur.fetchall()
+
 
 
     def delete_sessions_by_ids(self, ids: List[int]):
