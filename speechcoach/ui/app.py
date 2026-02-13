@@ -7,6 +7,7 @@ from speechcoach.config import (
     APP_NAME, APP_VERSION,
     DATA_DIR, AUDIO_DIR,
     DEFAULT_DB_PATH, DEFAULT_STORIES_PATH, FALLBACK_STORIES_PATH,
+    RESOURCES_DIR,
 )
 from speechcoach.utils_paths import ensure_dir, pick_existing
 from speechcoach.db import DataLayer
@@ -15,7 +16,7 @@ from speechcoach.audio import AudioEngine
 from speechcoach.asr import ASREngine
 from speechcoach.game import GameController
 from speechcoach.session_manager import build_session_plan
-from speechcoach.rewards import pick_new_card
+from speechcoach.rewards import load_catalog, choose_new_card_for_child
 
 from .dialogs_children import ChildManagerDialog
 from .dialogs_dashboard import DashboardDialog
@@ -39,6 +40,15 @@ class SpeechCoachApp(tk.Tk):
         self.dl = DataLayer(db_path)
         self.stories = StoryEngine(stories_path)
         n = self.stories.load()
+
+        # Rewards catalog (cards)
+        try:
+            from pathlib import Path
+            cat_path = Path(RESOURCES_DIR) / "cards" / "catalog.json"
+            self.cards_catalog = load_catalog(str(cat_path)) if cat_path.exists() else []
+        except Exception:
+            self.cards_catalog = []
+
 
         self.audio = AudioEngine()
         self.asr = ASREngine()
@@ -70,6 +80,32 @@ class SpeechCoachApp(tk.Tk):
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
     
+    def on_close(self):
+        """Fermeture propre de l'application (audio/session/DB) puis destruction Tk."""
+        # Stopper une session si elle existe
+        try:
+            if hasattr(self, "session_manager") and self.session_manager:
+                self.session_manager.stop()
+        except Exception:
+            pass
+
+        # Stopper audio/tts si vous avez des objets dédiés
+        try:
+            if hasattr(self, "audio") and self.audio:
+                self.audio.stop_all()  # ou .stop() selon votre implémentation
+        except Exception:
+            pass
+
+        # Fermer la DB si besoin
+        try:
+            if hasattr(self, "dl") and self.dl:
+                self.dl.close()  # si DataLayer expose close(); sinon laisser
+        except Exception:
+            pass
+
+        self.destroy()
+
+
     def open_audio_devices(self):
         """Open audio device selection (micro + output)."""
         AudioDevicesDialog(self, self.audio)
@@ -132,10 +168,16 @@ class SpeechCoachApp(tk.Tk):
         )
         self.chk_child_mode.pack(side="left", padx=6)
 
-        ttk.Label(top, text="Tours:").pack(side="left")
-        self.var_rounds = tk.IntVar(value=6)
-        self.spin_rounds = ttk.Spinbox(top, from_=1, to=20, textvariable=self.var_rounds, width=4)
+        ttk.Label(top, text="Durée (min):").pack(side="left")
+        self.var_minutes = tk.IntVar(value=3)
+        self.spin_minutes = ttk.Spinbox(top, from_=1, to=20, textvariable=self.var_minutes, width=4, command=self.on_duration_change)
+        self.spin_minutes.pack(side="left", padx=6)
+
+        ttk.Label(top, text="Tours (auto):").pack(side="left")
+        self.var_rounds = tk.IntVar(value=3)
+        self.spin_rounds = ttk.Spinbox(top, from_=1, to=20, textvariable=self.var_rounds, width=4, state="readonly")
         self.spin_rounds.pack(side="left", padx=6)
+        
 
         self.btn_start = ttk.Button(top, text="▶️ Démarrer", command=self.start_game)
         self.btn_start.pack(side="left", padx=6)
@@ -202,38 +244,36 @@ class SpeechCoachApp(tk.Tk):
         print("GRAPH:", session_id, child_id, phoneme)
 
 
-    def on_toggle_mode(self):
-        """Switch between parent mode (manual rounds) and child mode (auto session)."""
-        is_child = bool(self.var_child_mode.get()) if getattr(self, "var_child_mode", None) is not None else False
+    
+    def on_duration_change(self):
+        """Recompute auto rounds when duration changes."""
+        try:
+            if not self.current_child_id:
+                return
+            child = self.dl.get_child(int(self.current_child_id))
+            plan = build_session_plan(child, duration_min=int(self.var_minutes.get() or 3))
+            self.var_rounds.set(int(plan.rounds))
+        except Exception:
+            pass
 
+
+    def on_toggle_mode(self):
+        # In child mode, we hide advanced controls; duration remains user-configurable.
+        try:
+            is_child = bool(self.var_child_mode.get())
+        except Exception:
+            is_child = False
+
+        # pause/replay disabled in child mode (UX)
         if is_child:
-            # Update button label and lock advanced controls
-            try:
-                self.btn_start.config(text="🎮 Jouer (10 min)")
-            except Exception:
-                pass
-            try:
-                self.spin_rounds.config(state="disabled")
-            except Exception:
-                pass
-            # Pause/replay are advanced: keep available only for parent mode
-            try:
-                self.btn_pause.config(state="disabled")
-                self.btn_replay.config(state="disabled")
-            except Exception:
-                pass
-            self.set_status("Mode enfant activé : session guidée (10 min).")
+            self.btn_pause.config(state="disabled")
+            self.btn_replay.config(state="disabled")
+            self.btn_start.config(text="🎮 Jouer")
         else:
-            try:
-                self.btn_start.config(text="▶️ Démarrer")
-            except Exception:
-                pass
-            try:
-                self.spin_rounds.config(state="normal")
-            except Exception:
-                pass
-            # Buttons state will be re-enabled on start_game
-            self.set_status("Mode parent : réglages manuels.")
+            self.btn_start.config(text="▶️ Démarrer")
+        # Always recompute rounds when duration or child changes
+        self.on_duration_change()
+
 
     def start_session_auto(self, duration_min: int = 10):
         """Start a short, guided session adapted to the selected child."""
@@ -294,7 +334,7 @@ class SpeechCoachApp(tk.Tk):
 
         # Auto session for children: simplified UX
         if getattr(self, 'var_child_mode', None) is not None and self.var_child_mode.get():
-            return self.start_session_auto(duration_min=10)
+            return self.start_session_auto(duration_min=3)
 
         try:
             self._start_with_rounds(int(self.var_rounds.get()))
@@ -349,26 +389,106 @@ class SpeechCoachApp(tk.Tk):
                 and getattr(self.game, 'last_end_reason', '') == 'finished'
                 and self.current_child_id
             ):
-                owned = self.dl.list_child_cards(int(self.current_child_id))
-                card = pick_new_card(owned)
-                if card:
-                    if self.dl.add_child_card(int(self.current_child_id), card):
-                        messagebox.showinfo(
-                            "Récompense",
-                            f"🎴 Nouvelle carte gagnée : {card}\n\n(Progression: {len(owned)+1})",
-                            parent=self,
-                        )
+                # Update progress (adaptive XP/level/streak)
+                prog = self.dl.upsert_progress_after_session(int(self.current_child_id), float(getattr(self.game, "last_final_score", 0.0) or 0.0))
+                level = int(prog["level"] or 1) if prog else 1
+
+                owned_ids = self.dl.list_owned_card_ids(int(self.current_child_id))
+                card = choose_new_card_for_child(
+                    catalog=getattr(self, "cards_catalog", []) or [],
+                    owned_card_ids=owned_ids,
+                    child_level=level,
+                )
+
+                if card is not None and self.dl.add_child_card_v2(int(self.current_child_id), card):
+                    self._show_card_reward(card, prog)
                 else:
-                    messagebox.showinfo(
-                        "Récompense",
-                        "🎴 Tu as déjà toutes les cartes de la collection !",
-                        parent=self,
-                    )
+                    # Collection complete for eligible cards (or insert ignored)
+                    self._show_simple_reward(prog)
         except Exception:
             # Never fail end-of-session UX due to rewards.
             pass
 
-    def on_close(self):
+    
+    def _show_card_reward(self, card, prog=None):
+        """Popup with card image + rarity + progress."""
+        try:
+            import tkinter as tk
+            from tkinter import ttk
+            from pathlib import Path
+
+            win = tk.Toplevel(self)
+            win.title("Récompense")
+            win.geometry("360x420")
+            win.resizable(False, False)
+            win.transient(self)
+            win.grab_set()
+
+            frm = ttk.Frame(win, padding=12)
+            frm.pack(fill="both", expand=True)
+
+            title = f"🎉 Nouvelle carte !"
+            ttk.Label(frm, text=title, font=("Segoe UI", 14, "bold")).pack(pady=(0,10))
+
+            # Image
+            import base64
+
+            photo = None
+            try:
+                b = getattr(card, "icon_bytes", None)
+                if b:
+                    b64 = base64.b64encode(b).decode("ascii")
+                    photo = tk.PhotoImage(data=b64)
+            except Exception:
+                photo = None
+
+            img_path = Path(RESOURCES_DIR) / "cards" / str(getattr(card, "icon_path", "") or "")
+            if photo is None and img_path.exists():
+                try:
+                    photo = tk.PhotoImage(file=str(img_path))
+                    # reduce to ~140px
+                    if photo.width() > 160:
+                        photo = photo.subsample(max(1, photo.width() // 160))
+                except Exception:
+                    photo = None
+
+            if photo is not None:
+                lbl_img = ttk.Label(frm, image=photo)
+                lbl_img.image = photo
+                lbl_img.pack(pady=(0,10))
+
+            rarity = getattr(card, "rarity", "common")
+            name = getattr(card, "name", "Carte")
+            ttk.Label(frm, text=f"{name}", font=("Segoe UI", 13, "bold")).pack()
+            ttk.Label(frm, text=f"Rareté : {rarity}").pack(pady=(4,8))
+
+            if prog is not None:
+                try:
+                    lvl = int(prog["level"] or 1)
+                    xp = int(prog["xp"] or 0)
+                    streak = int(prog["streak"] or 0)
+                    ttk.Label(frm, text=f"Niveau : {lvl}   XP : {xp}").pack()
+                    ttk.Label(frm, text=f"Série : {streak} jour(s)").pack(pady=(2,10))
+                except Exception:
+                    pass
+
+            ttk.Button(frm, text="OK", command=win.destroy).pack(pady=8)
+        except Exception:
+            # fallback
+            from tkinter import messagebox
+            messagebox.showinfo("Récompense", f"🎴 Nouvelle carte : {getattr(card,'name','')}", parent=self)
+
+    def _show_simple_reward(self, prog=None):
+        from tkinter import messagebox
+        msg = "✅ Bravo ! Session terminée."
+        if prog is not None:
+            try:
+                msg += f"\nNiveau : {int(prog['level'] or 1)}  |  Série : {int(prog['streak'] or 0)} jour(s)"
+            except Exception:
+                pass
+        messagebox.showinfo("Récompense", msg, parent=self)
+
+def on_close(self):
         try:
             self.game.stop()
         except Exception:

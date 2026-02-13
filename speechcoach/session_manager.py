@@ -11,13 +11,13 @@ class SessionPlan:
     The goal is to make sessions predictable and short for children,
     while keeping enough repetitions to be useful.
     """
-    duration_min: int = 10
+    duration_min: int = 3
     rounds: int = 6
     difficulty: str = "auto"  # reserved for future use
     reward_points: int = 1    # reserved for future use
 
 
-def build_session_plan(child: Optional[Dict[str, Any]], duration_min: int = 10) -> SessionPlan:
+def build_session_plan(child: Optional[Dict[str, Any]], duration_min: int = 3) -> SessionPlan:
     """Return a session plan adapted to the child's age.
 
     Rules of thumb (kid UX):
@@ -32,8 +32,10 @@ def build_session_plan(child: Optional[Dict[str, Any]], duration_min: int = 10) 
         age = None
 
     # Default pacing: conservative, because each round includes TTS + prompt + record + ASR + analysis.
-    if duration_min <= 5:
+    if duration_min <= 3:
         base_rounds = 3
+    elif duration_min <= 5:
+        base_rounds = 4
     elif duration_min <= 10:
         base_rounds = 6
     else:
@@ -42,9 +44,11 @@ def build_session_plan(child: Optional[Dict[str, Any]], duration_min: int = 10) 
     if age is None:
         rounds = base_rounds
     elif age <= 6:
-        rounds = max(4, base_rounds - 1)   # ~CP
+        # CP: very short & confidence-first
+        rounds = min(base_rounds, 3 if duration_min <= 3 else 4)
     elif age <= 8:
-        rounds = base_rounds               # ~CE2
+        # CE2: slightly more reps, still compact
+        rounds = min(base_rounds + 1, 5 if duration_min <= 5 else 7)
     else:
         rounds = min(10, base_rounds + 1)
 

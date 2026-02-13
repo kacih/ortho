@@ -1,7 +1,7 @@
 import os
 
 APP_NAME = "Speech Coach"
-APP_VERSION = "7.10.4"
+APP_VERSION = "7.12.0"
 
 DEFAULT_SAMPLE_RATE = 16000
 
@@ -16,3 +16,6 @@ DEFAULT_DB_PATH = os.path.join(DATA_DIR, "coach.db")
 # stories.json: d'abord data/, sinon dossier projet
 DEFAULT_STORIES_PATH = os.path.join(DATA_DIR, "stories.json")
 FALLBACK_STORIES_PATH = os.path.join(PROJECT_ROOT, "stories.json")
+
+# assets (images, cards...)
+RESOURCES_DIR = os.path.join(PROJECT_ROOT, 'ressources')

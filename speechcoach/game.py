@@ -53,11 +53,13 @@ class GameController:
 
         self.child_id: Optional[int] = None
         self.state = GameState.IDLE
+        self._paused_prev_state = GameState.PLAYING
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
 
         self.last_phrase: Optional[str] = None
+        self.last_final_score: float = 0.0
 
         # End-of-session metadata (used by UI for rewards / UX)
         # Values: finished | stopped | error | idle
@@ -109,10 +111,12 @@ class GameController:
         self._stop_event.set()
 
     def toggle_pause(self):
+        # Keep track of the previous active state so resume returns to the right phase.
         if self.state == GameState.PAUSED:
-            self.state = GameState.PLAYING
+            self.state = getattr(self, '_paused_prev_state', GameState.PLAYING) or GameState.PLAYING
             self._status("▶️ Reprise")
-        elif self.state in (GameState.PLAYING, GameState.LISTENING):
+        elif self.state in (GameState.PLAYING, GameState.LISTENING, GameState.ANALYZING):
+            self._paused_prev_state = self.state
             self.state = GameState.PAUSED
             self._status("⏸️ Pause")
 
@@ -234,6 +238,10 @@ class GameController:
                 a_contrast = acoustic_score_from_features(feat, ref_contrast) if ref_contrast else 0.0
                 conf = phoneme_confidence_score(a_score, a_contrast)
                 final = final_score_v71(w, a_score)
+                try:
+                    self.last_final_score = float(final)
+                except Exception:
+                    self.last_final_score = 0.0
 
                 self.dl.save_session({
                     "created_at": now_iso(),
@@ -287,8 +295,9 @@ class GameController:
 
         finally:
             self.state = GameState.IDLE
-            if self.on_end:
-                self._dispatch(self.on_end)
+        self._paused_prev_state = GameState.PLAYING
+        if self.on_end:
+            self._dispatch(self.on_end)
 
     # ==========================================================
     # UTILS

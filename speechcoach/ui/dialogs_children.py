@@ -26,7 +26,7 @@ class ChildManagerDialog(tk.Toplevel):
             self,
             columns=("id","name","age","sex","grade","created"),
             show="tree headings",
-            height=12,
+            height=6,
             style="Children.Treeview",
         )
         self.tree.heading("#0", text="Avatar")
@@ -34,7 +34,17 @@ class ChildManagerDialog(tk.Toplevel):
         for c, w in [("id",60),("name",160),("age",60),("sex",80),("grade",80),("created",160)]:
             self.tree.heading(c, text=c)
             self.tree.column(c, width=w, anchor="w")
-        self.tree.pack(fill="both", expand=True, padx=10, pady=10)
+        # Tree + scrollbar (buttons must stay visible without resizing)
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
+
+        yscroll = ttk.Scrollbar(tree_frame, orient="vertical")
+        yscroll.pack(side="right", fill="y")
+
+        self.tree.configure(yscrollcommand=yscroll.set)
+        yscroll.configure(command=self.tree.yview)
+
+        self.tree.pack(side="left", fill="both", expand=True)
 
         # Keep PhotoImage references
         self._avatars = {}

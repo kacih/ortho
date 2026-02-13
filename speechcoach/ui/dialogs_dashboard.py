@@ -13,7 +13,7 @@ class DashboardDialog(tk.Toplevel):
         super().__init__(master)
         self.on_pick = on_pick
         self.title("Dashboard Pro")
-        self.geometry("1180x600")
+        self.geometry("1770x600")
         self.resizable(True, True)
 
         self.dl = dl
@@ -99,7 +99,7 @@ class DashboardDialog(tk.Toplevel):
         self.ax = self.fig.add_subplot(111)
 
         self.ax.set_title("Sélectionnez une ligne…")
-        self.ax.set_xlabel("Date")
+        self.ax.set_xlabel("Observation")
         self.ax.set_ylabel("Score final")
 
         self.canvas = FigureCanvasTkAgg(self.fig, master=right)
@@ -114,6 +114,9 @@ class DashboardDialog(tk.Toplevel):
         ttk.Button(bottom, text="Fermer", command=self.destroy).pack(side="right")
 
         self.refresh()
+        # Update chart
+        self._plot_evolution()
+
 
     # ---------- Tri typé
     def _safe_int(self, x: Any, default: int = 0) -> int:
@@ -390,15 +393,95 @@ class DashboardDialog(tk.Toplevel):
         self.replay_selected()
 
     def _on_row_select(self, _event=None):
+        # When selecting a row, sync filters (child + phoneme) and refresh the graph.
+        sel = self.tree.selection()
+        if not sel:
+            return
+        item = self.tree.item(sel[0])
+        values = item.get("values") or []
+        # Expected columns in tree: (id, child_name, phoneme, score, created_at, ...)
+        # We rely on hidden mappings stored on insertion (row meta) if present.
+        meta = item.get("tags") or []
+        # Prefer explicit mapping if the tree stores child_id in iid
+        try:
+            child_id = int(sel[0])
+        except Exception:
+            child_id = None
+
+        phoneme = None
+        if len(values) >= 3:
+            phoneme = values[2]
+
+        if child_id is not None:
+            self.child_id = child_id
+            # If there is a child filter dropdown, keep it in sync
+            try:
+                self.child_filter_var.set(str(child_id))
+            except Exception:
+                pass
+
+        if phoneme:
+            try:
+                self.phoneme_filter_var.set(str(phoneme))
+            except Exception:
+                pass
+
         self._plot_evolution()
 
+    
     def _plot_evolution(self):
-        # Delegate to the host app if provided
-        if self.on_pick:
-            sel = self.tree.selection()
-            if sel:
-                try:
-                    sid = int(self.tree.set(sel[0], "id"))
-                    self.on_pick(sid)
-                except Exception:
-                    pass
+        """Plot evolution of final_score for selected child and phoneme."""
+        try:
+            child_id = self._get_selected_child_id()
+            phoneme = self._get_selected_phoneme()
+        except Exception:
+            child_id = None
+            phoneme = "Tous"
+
+        self.ax.clear()
+        self.ax.grid(True)
+
+        if not child_id:
+            self.ax.set_title("Choisissez un enfant pour voir l'évolution")
+            self.ax.set_xlabel("Observation")
+            self.ax.set_ylabel("Score final")
+            self.canvas.draw()
+            return
+
+        try:
+            series = self.dl.get_score_series(int(child_id), phoneme)
+        except Exception:
+            series = []
+
+        if not series:
+            ph = phoneme if phoneme and phoneme != "Tous" else "tous phonèmes"
+            self.ax.set_title(f"Aucune donnée pour {ph}")
+            self.ax.set_xlabel("Observation")
+            self.ax.set_ylabel("Score final")
+            self.canvas.draw()
+            return
+
+        # Parse dates for a nicer x-axis (fallback to index if parse fails)
+        xs = []
+        ys = []
+        for dt, sc in series:
+            ys.append(float(sc))
+            try:
+                # Accept ISO timestamps
+                d = datetime.fromisoformat(str(dt).replace("Z",""))
+                xs.append(d)
+            except Exception:
+                xs.append(len(xs) + 1)
+
+        try:
+            self.ax.plot(xs, ys, marker="o")
+        except Exception:
+            # fallback simple
+            self.ax.plot(list(range(1, len(ys)+1)), ys, marker="o")
+
+        ph = phoneme if phoneme and phoneme != "Tous" else "Tous"
+        self.ax.set_title(f"Évolution du score — Phonème: {ph}")
+        self.ax.set_xlabel("Observation")
+        self.ax.set_ylabel("Score final")
+        self.canvas.draw()
+
