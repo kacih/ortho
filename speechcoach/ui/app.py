@@ -14,6 +14,8 @@ from speechcoach.stories import StoryEngine
 from speechcoach.audio import AudioEngine
 from speechcoach.asr import ASREngine
 from speechcoach.game import GameController
+from speechcoach.session_manager import build_session_plan
+from speechcoach.rewards import pick_new_card
 
 from .dialogs_children import ChildManagerDialog
 from .dialogs_dashboard import DashboardDialog
@@ -121,9 +123,19 @@ class SpeechCoachApp(tk.Tk):
 
         ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=10)
 
+        self.var_child_mode = tk.BooleanVar(value=False)
+        self.chk_child_mode = ttk.Checkbutton(
+            top,
+            text="Mode enfant (auto)",
+            variable=self.var_child_mode,
+            command=self.on_toggle_mode
+        )
+        self.chk_child_mode.pack(side="left", padx=6)
+
         ttk.Label(top, text="Tours:").pack(side="left")
         self.var_rounds = tk.IntVar(value=6)
-        ttk.Spinbox(top, from_=1, to=20, textvariable=self.var_rounds, width=4).pack(side="left", padx=6)
+        self.spin_rounds = ttk.Spinbox(top, from_=1, to=20, textvariable=self.var_rounds, width=4)
+        self.spin_rounds.pack(side="left", padx=6)
 
         self.btn_start = ttk.Button(top, text="▶️ Démarrer", command=self.start_game)
         self.btn_start.pack(side="left", padx=6)
@@ -190,6 +202,88 @@ class SpeechCoachApp(tk.Tk):
         print("GRAPH:", session_id, child_id, phoneme)
 
 
+    def on_toggle_mode(self):
+        """Switch between parent mode (manual rounds) and child mode (auto session)."""
+        is_child = bool(self.var_child_mode.get()) if getattr(self, "var_child_mode", None) is not None else False
+
+        if is_child:
+            # Update button label and lock advanced controls
+            try:
+                self.btn_start.config(text="🎮 Jouer (10 min)")
+            except Exception:
+                pass
+            try:
+                self.spin_rounds.config(state="disabled")
+            except Exception:
+                pass
+            # Pause/replay are advanced: keep available only for parent mode
+            try:
+                self.btn_pause.config(state="disabled")
+                self.btn_replay.config(state="disabled")
+            except Exception:
+                pass
+            self.set_status("Mode enfant activé : session guidée (10 min).")
+        else:
+            try:
+                self.btn_start.config(text="▶️ Démarrer")
+            except Exception:
+                pass
+            try:
+                self.spin_rounds.config(state="normal")
+            except Exception:
+                pass
+            # Buttons state will be re-enabled on start_game
+            self.set_status("Mode parent : réglages manuels.")
+
+    def start_session_auto(self, duration_min: int = 10):
+        """Start a short, guided session adapted to the selected child."""
+        if not self.current_child_id:
+            messagebox.showwarning("Enfant", "Sélectionne d'abord un enfant.")
+            return
+        if len(self.stories.stories) == 0:
+            messagebox.showerror("Stories", f"Aucune story chargée.\nChemin: {self.stories.path}")
+            return
+
+        child = None
+        try:
+            child = self.dl.get_child(int(self.current_child_id))
+        except Exception:
+            child = None
+
+        # Convert sqlite3.Row to dict-like for safety
+        child_dict = dict(child) if child is not None else None
+        plan = build_session_plan(child_dict, duration_min=duration_min)
+
+        # Reflect the plan in UI (read-only)
+        try:
+            self.var_rounds.set(int(plan.rounds))
+        except Exception:
+            pass
+
+        self.set_status(f"🎮 Session auto : {plan.rounds} tours (~{plan.duration_min} min)")
+        return self._start_with_rounds(plan.rounds)
+
+    def _start_with_rounds(self, rounds: int):
+        """Internal helper to start the game safely with the given number of rounds."""
+        try:
+            self.btn_start.config(state="disabled")
+            self.btn_stop.config(state="normal")
+            # In child mode we keep pause/replay disabled
+            if getattr(self, "var_child_mode", None) is not None and self.var_child_mode.get():
+                self.btn_pause.config(state="disabled")
+                self.btn_replay.config(state="disabled")
+            else:
+                self.btn_pause.config(state="normal")
+                self.btn_replay.config(state="normal")
+            self.game.start(rounds=int(rounds))
+        except Exception as e:
+            messagebox.showerror("Erreur", str(e))
+            self.btn_start.config(state="normal")
+            self.btn_stop.config(state="disabled")
+            self.btn_pause.config(state="disabled")
+            self.btn_replay.config(state="disabled")
+
+
     def start_game(self):
         if not self.current_child_id:
             messagebox.showwarning("Enfant", "Sélectionne d'abord un enfant.")
@@ -198,12 +292,12 @@ class SpeechCoachApp(tk.Tk):
             messagebox.showerror("Stories", f"Aucune story chargée.\nChemin: {self.stories.path}")
             return
 
+        # Auto session for children: simplified UX
+        if getattr(self, 'var_child_mode', None) is not None and self.var_child_mode.get():
+            return self.start_session_auto(duration_min=10)
+
         try:
-            self.btn_start.config(state="disabled")
-            self.btn_stop.config(state="normal")
-            self.btn_pause.config(state="normal")
-            self.btn_replay.config(state="normal")
-            self.game.start(rounds=int(self.var_rounds.get()))
+            self._start_with_rounds(int(self.var_rounds.get()))
         except Exception as e:
             self.on_end()
             messagebox.showerror("Erreur", str(e))
@@ -246,6 +340,33 @@ class SpeechCoachApp(tk.Tk):
         self.btn_pause.config(state="disabled")
         self.btn_replay.config(state="disabled")
         self.btn_pause.config(text="⏸️ Pause")
+
+        # Reward: card collection (child mode only, completed session only)
+        try:
+            if (
+                getattr(self, 'var_child_mode', None) is not None
+                and self.var_child_mode.get()
+                and getattr(self.game, 'last_end_reason', '') == 'finished'
+                and self.current_child_id
+            ):
+                owned = self.dl.list_child_cards(int(self.current_child_id))
+                card = pick_new_card(owned)
+                if card:
+                    if self.dl.add_child_card(int(self.current_child_id), card):
+                        messagebox.showinfo(
+                            "Récompense",
+                            f"🎴 Nouvelle carte gagnée : {card}\n\n(Progression: {len(owned)+1})",
+                            parent=self,
+                        )
+                else:
+                    messagebox.showinfo(
+                        "Récompense",
+                        "🎴 Tu as déjà toutes les cartes de la collection !",
+                        parent=self,
+                    )
+        except Exception:
+            # Never fail end-of-session UX due to rewards.
+            pass
 
     def on_close(self):
         try:

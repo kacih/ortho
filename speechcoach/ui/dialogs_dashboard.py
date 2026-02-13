@@ -312,14 +312,34 @@ class DashboardDialog(tk.Toplevel):
         ids = self._selected_ids()
         if not ids:
             return
-        if not messagebox.askyesno("Confirmer", f"Supprimer {len(ids)} ligne(s) du dashboard ?"):
+        # IMPORTANT (Windows/Tk): keep dialogs modal to THIS Toplevel.
+        # Otherwise, focus can jump back to the main window after the messagebox.
+        if not messagebox.askyesno(
+            "Confirmer",
+            f"Supprimer {len(ids)} ligne(s) du dashboard ?",
+            parent=self,
+        ):
             return
         try:
             self.dl.delete_sessions_by_ids(ids)
         except Exception as e:
-            messagebox.showerror("Erreur", f"Suppression impossible: {e}")
+            messagebox.showerror("Erreur", f"Suppression impossible: {e}", parent=self)
             return
         self.refresh()
+        # Keep dashboard visible/focused after deletion (Windows tends to return
+        # focus to the root window when a messagebox closes).
+        try:
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
+
+        # Re-focus the dashboard after refresh.
+        try:
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
 
     def replay_selected(self):
         r = self._get_selected_row()
