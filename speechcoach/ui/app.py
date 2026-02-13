@@ -59,6 +59,13 @@ class SpeechCoachApp(tk.Tk):
 
         self.set_status(f"Prêt. Stories={n} | JSON={stories_path} | DB={db_path}")
 
+        # UX audio: préchauffage silencieux du moteur TTS pour réduire
+        # les premières syllabes "mangées" sur certains périphériques.
+        try:
+            threading.Thread(target=self.audio.tts.warmup, daemon=True).start()
+        except Exception:
+            pass
+
         self.protocol("WM_DELETE_WINDOW", self.on_close)
     
     def open_audio_devices(self):
@@ -90,12 +97,6 @@ class SpeechCoachApp(tk.Tk):
         m_help = tk.Menu(menubar, tearoff=0)
         m_help.add_command(label="À propos", command=lambda: messagebox.showinfo("À propos", f"{APP_NAME}\n{APP_VERSION}"))
         menubar.add_cascade(label="Aide", menu=m_help)
-        options_menu = tk.Menu(menubar, tearoff=0)
-        options_menu.add_command(label="Voix TTS", command=self.open_tts_settings)
-
-        menubar.add_cascade(label="Options", menu=options_menu)
-
-
         self.config(menu=menubar)
 
     def _build_ui(self):

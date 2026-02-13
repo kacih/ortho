@@ -1,6 +1,8 @@
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import Optional, Dict, Any
+import os
+from datetime import datetime
 
 class ChildManagerDialog(tk.Toplevel):
     def __init__(self, master, dl, on_select=None):
@@ -12,11 +14,23 @@ class ChildManagerDialog(tk.Toplevel):
         self.dl = dl
         self.on_select = on_select
 
-        self.tree = ttk.Treeview(self, columns=("id","name","age","sex","grade","created"), show="headings", height=12)
+        # NOTE UX: on utilise la colonne #0 pour afficher un avatar (icône).
+        # show="tree headings" permet de garder les colonnes en headings.
+        self.tree = ttk.Treeview(
+            self,
+            columns=("id","name","age","sex","grade","created"),
+            show="tree headings",
+            height=12
+        )
+        self.tree.heading("#0", text="Avatar")
+        self.tree.column("#0", width=52, anchor="center", stretch=False)
         for c, w in [("id",60),("name",160),("age",60),("sex",80),("grade",80),("created",160)]:
             self.tree.heading(c, text=c)
             self.tree.column(c, width=w, anchor="w")
         self.tree.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Keep PhotoImage references
+        self._avatars = {}
 
         # UX: double-clic = sélectionner l'enfant et fermer
         self.tree.bind("<Double-1>", lambda e: self.select_child())
@@ -35,7 +49,76 @@ class ChildManagerDialog(tk.Toplevel):
         for i in self.tree.get_children():
             self.tree.delete(i)
         for r in self.dl.list_children():
-            self.tree.insert("", "end", values=(r["id"], r["name"], r["age"], r["sex"], r["grade"], r["created_at"]))
+            # sqlite3.Row behaves like a mapping but has no .get()
+            avatar_path = ""
+            created_at = None
+            try:
+                if "avatar_path" in r.keys():
+                    avatar_path = r["avatar_path"] or ""
+                if "created_at" in r.keys():
+                    created_at = r["created_at"]
+            except Exception:
+                # best effort (older DB schemas)
+                avatar_path = ""
+                created_at = None
+
+            img = self._load_avatar_image(avatar_path)
+            created_h = self._fmt_created_at_fr(created_at)
+            # IMPORTANT (Python 3.14 / Tk): pass -values as a *single* Tcl list string.
+            # If a Python tuple/list is passed through, it may be expanded into multiple
+            # Tcl words and break insert() with "unknown option" errors.
+            def _s(v):
+                return "" if v is None else str(v)
+            tcl_values = self.tree.tk.call(
+                "list",
+                _s(r["id"]),
+                _s(r["name"]),
+                _s(r["age"]),
+                _s(r["sex"]),
+                _s(r["grade"]),
+                _s(created_h),
+            )
+            iid = self.tree.insert(
+                "",
+                "end",
+                iid=f"child_{r['id']}",
+                text="",
+                image=img,
+                values=tcl_values,
+            )
+            if img is not None:
+                self._avatars[iid] = img
+
+    def _fmt_created_at_fr(self, s: Optional[str]) -> str:
+        """Format date as dd/MM/YYYY HH:MM:SS (best effort)."""
+        if not s:
+            return ""
+        s = str(s).strip()
+        try:
+            # Accept ISO "2026-02-11T18:38:08" and "2026-02-12 16:39:02"
+            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return dt.strftime("%d/%m/%Y %H:%M:%S")
+        except Exception:
+            return s
+
+    def _load_avatar_image(self, path: str):
+        """Load a small avatar icon (supports formats accepted by Tk PhotoImage).
+        If loading fails, return None.
+        """
+        path = (path or "").strip()
+        if not path or not os.path.exists(path):
+            return None
+        try:
+            img = tk.PhotoImage(file=path)
+            # Resize to ~32px keeping it lightweight (subsample only supports integer)
+            w = max(1, img.width())
+            h = max(1, img.height())
+            factor = max(1, int(max(w, h) / 32))
+            if factor > 1:
+                img = img.subsample(factor, factor)
+            return img
+        except Exception:
+            return None
 
     def _get_selected_id(self) -> Optional[int]:
         sel = self.tree.selection()
