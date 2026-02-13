@@ -1,17 +1,83 @@
-
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
 
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import cm
+# ReportLab is OPTIONAL. The application must not crash if it is missing.
+REPORTLAB_AVAILABLE = True
+_REPORTLAB_IMPORT_ERROR: Optional[str] = None
 
+try:
+    from reportlab.pdfgen import canvas  # type: ignore
+    from reportlab.lib.pagesizes import A4  # type: ignore
+    from reportlab.lib.units import cm  # type: ignore
+except Exception as e:  # ImportError or missing deps
+    REPORTLAB_AVAILABLE = False
+    _REPORTLAB_IMPORT_ERROR = str(e)
+    canvas = None  # type: ignore
+    A4 = (595.27, 841.89)  # fallback A4 points
+    cm = 28.3465  # fallback
+
+def require_reportlab() -> None:
+    if not REPORTLAB_AVAILABLE:
+        msg = "Export PDF indisponible : dépendance 'reportlab' non installée."
+        if _REPORTLAB_IMPORT_ERROR:
+            msg += f" (détail: {_REPORTLAB_IMPORT_ERROR})"
+        raise RuntimeError(msg)
 
 def _safe(v, default=""):
     return v if v is not None else default
+
+
+def _weak_to_dict(row: Any) -> Dict[str, Any]:
+    """Normalize a 'weakest phoneme' row into a dict.
+
+    Supports:
+    - dict-like objects (already normalized)
+    - tuples/lists from DataLayer.get_phoneme_insights(): (phoneme, n, avg_score)
+    - sqlite3.Row / mapping-like objects with keys
+    """
+    if isinstance(row, dict):
+        return row
+    if isinstance(row, (tuple, list)):
+        try:
+            phon, n, avg = row[0], row[1], row[2]
+            return {"phoneme": phon, "n": n, "avg_score": avg}
+        except Exception:
+            return {}
+    try:
+        return {"phoneme": row["phoneme"], "n": row["n"], "avg_score": row["avg_score"]}
+    except Exception:
+        return {}
+
+
+def _improve_to_dict(row: Any) -> Dict[str, Any]:
+    """Normalize an 'improving phoneme' row into a dict.
+
+    Supports:
+    - dict-like objects
+    - tuples/lists: (phoneme, delta, recent_avg, prev_avg, n)
+    - sqlite3.Row / mapping-like objects with keys
+    """
+    if isinstance(row, dict):
+        return row
+    if isinstance(row, (tuple, list)):
+        try:
+            phon, delta, recent, prev, n = row[0], row[1], row[2], row[3], row[4]
+            return {"phoneme": phon, "delta": delta, "recent_avg": recent, "prev_avg": prev, "n": n}
+        except Exception:
+            return {}
+    try:
+        return {
+            "phoneme": row["phoneme"],
+            "delta": row["delta"],
+            "recent_avg": row["recent_avg"],
+            "prev_avg": row["prev_avg"],
+            "n": row["n"],
+        }
+    except Exception:
+        return {}
 
 
 def _sparkline(c: canvas.Canvas, x: float, y: float, w: float, h: float, values: List[float]):
@@ -43,10 +109,11 @@ def build_child_progress_pdf(
     child: Any,
     summary: Dict[str, Any],
     recent_scores: List[Tuple[str, float]],
-    weaknesses: List[Dict[str, Any]],
-    improving: List[Dict[str, Any]],
+    weaknesses: List[Any],
+    improving: List[Any],
     created_at: Optional[str] = None,
 ):
+    require_reportlab()
     """One-page PDF progress report for a child."""
     c = canvas.Canvas(filepath, pagesize=A4)
     W, H = A4
@@ -129,9 +196,10 @@ def build_child_progress_pdf(
         c.drawString(x, y, "Difficultés (Top 3) :")
         y -= 0.45*cm
         for r in weaknesses[:3]:
-            phon = r.get("phoneme") or ""
-            val = float(r.get("avg_score") or 0.0)
-            cnt = int(r.get("n") or 0)
+            rr = _weak_to_dict(r)
+            phon = rr.get("phoneme") or ""
+            val = float(rr.get("avg_score") or 0.0)
+            cnt = int(rr.get("n") or 0)
             c.drawString(x + 0.5*cm, y, f"• {phon}  —  {val:.2f} (n={cnt})")
             y -= 0.4*cm
     else:
@@ -144,8 +212,9 @@ def build_child_progress_pdf(
         c.drawString(x, y, "En amélioration (Top 3) :")
         y -= 0.45*cm
         for r in improving[:3]:
-            phon = r.get("phoneme") or ""
-            delta = float(r.get("delta") or 0.0)
+            rr = _improve_to_dict(r)
+            phon = rr.get("phoneme") or ""
+            delta = float(rr.get("delta") or 0.0)
             c.drawString(x + 0.5*cm, y, f"• {phon}  —  {delta:+.2f}")
             y -= 0.4*cm
     else:
@@ -164,6 +233,7 @@ def build_group_progress_pdf(
     children: List[Any],
     fetcher,
 ):
+    require_reportlab()
     """Multi-page PDF: one page per child. `fetcher(child_id)` returns (child, summary, recent_scores, weaknesses, improving)."""
     c = canvas.Canvas(filepath, pagesize=A4)
     created = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -237,13 +307,13 @@ def build_group_progress_pdf(
         y -= 0.55*cm
         c.setFont("Helvetica", 10)
         if weaknesses:
-            w = weaknesses[0]
+            w = _weak_to_dict(weaknesses[0])
             c.drawString(x, y, f"Difficulté principale : {w.get('phoneme','')} ({float(w.get('avg_score') or 0.0):.2f})")
         else:
             c.drawString(x, y, "Difficulté principale : —")
         y -= 0.45*cm
         if improving:
-            im = improving[0]
+            im = _improve_to_dict(improving[0])
             c.drawString(x, y, f"Meilleure progression : {im.get('phoneme','')} ({float(im.get('delta') or 0.0):+.2f})")
         else:
             c.drawString(x, y, "Meilleure progression : —")

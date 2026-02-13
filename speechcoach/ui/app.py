@@ -4,6 +4,8 @@ from tkinter import ttk, messagebox, simpledialog
 import threading
 import json
 
+from speechcoach.deps import check_dependencies, format_dependency_report
+
 from speechcoach.config import (
     APP_NAME, APP_VERSION,
     DATA_DIR, AUDIO_DIR,
@@ -32,6 +34,13 @@ from speechcoach.ui.audio_settings import AudioSettingsDialog as TTSAudioSetting
 class SpeechCoachApp(tk.Tk):
     def __init__(self):
         super().__init__()
+        # Dependency diagnostics (do not crash if optional deps are missing)
+        try:
+            _deps = check_dependencies()
+            print(format_dependency_report(_deps))
+        except Exception:
+            pass
+
         self.title(f"{APP_NAME} — {APP_VERSION}")
         self.geometry("1060x740")
 

@@ -1,0 +1,11 @@
+# SpeechCoach dependencies
+# Core
+soundfile
+sounddevice
+matplotlib
+
+# ASR (optional depending on usage)
+faster-whisper
+
+# PDF export (optional)
+reportlab
