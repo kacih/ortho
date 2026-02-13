@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from typing import Optional, Dict, Any
 import os
+import base64
 from datetime import datetime
 
 class ChildManagerDialog(tk.Toplevel):
@@ -14,16 +15,22 @@ class ChildManagerDialog(tk.Toplevel):
         self.dl = dl
         self.on_select = on_select
 
+        # UX: make rows taller so the avatar is clearly visible.
+        # Using a dedicated style avoids impacting other Treeviews.
+        style = ttk.Style(self)
+        style.configure("Children.Treeview", rowheight=56)
+
         # NOTE UX: on utilise la colonne #0 pour afficher un avatar (icône).
         # show="tree headings" permet de garder les colonnes en headings.
         self.tree = ttk.Treeview(
             self,
             columns=("id","name","age","sex","grade","created"),
             show="tree headings",
-            height=12
+            height=12,
+            style="Children.Treeview",
         )
         self.tree.heading("#0", text="Avatar")
-        self.tree.column("#0", width=52, anchor="center", stretch=False)
+        self.tree.column("#0", width=60, anchor="center", stretch=False)
         for c, w in [("id",60),("name",160),("age",60),("sex",80),("grade",80),("created",160)]:
             self.tree.heading(c, text=c)
             self.tree.column(c, width=w, anchor="w")
@@ -51,18 +58,25 @@ class ChildManagerDialog(tk.Toplevel):
         for r in self.dl.list_children():
             # sqlite3.Row behaves like a mapping but has no .get()
             avatar_path = ""
+            avatar_blob = None
             created_at = None
             try:
                 if "avatar_path" in r.keys():
                     avatar_path = r["avatar_path"] or ""
+                if "avatar_blob" in r.keys():
+                    avatar_blob = r["avatar_blob"]
                 if "created_at" in r.keys():
                     created_at = r["created_at"]
             except Exception:
                 # best effort (older DB schemas)
                 avatar_path = ""
+                avatar_blob = None
                 created_at = None
 
-            img = self._load_avatar_image(avatar_path)
+            # Robust avatar loading:
+            # 1) Prefer binary stored in DB (stable)
+            # 2) Fallback to avatar_path (best effort)
+            img = self._load_avatar_image_blob(avatar_blob) or self._load_avatar_image(avatar_path)
             created_h = self._fmt_created_at_fr(created_at)
             # IMPORTANT (Python 3.14 / Tk): pass -values as a *single* Tcl list string.
             # If a Python tuple/list is passed through, it may be expanded into multiple
@@ -111,6 +125,28 @@ class ChildManagerDialog(tk.Toplevel):
         try:
             img = tk.PhotoImage(file=path)
             # Resize to ~32px keeping it lightweight (subsample only supports integer)
+            w = max(1, img.width())
+            h = max(1, img.height())
+            factor = max(1, int(max(w, h) / 32))
+            if factor > 1:
+                img = img.subsample(factor, factor)
+            return img
+        except Exception:
+            return None
+
+    def _load_avatar_image_blob(self, blob: Any):
+        """Load avatar from DB BLOB (expected PNG/GIF bytes). Best effort.
+        Tk PhotoImage 'data' expects base64.
+        """
+        if not blob:
+            return None
+        try:
+            if isinstance(blob, memoryview):
+                blob = blob.tobytes()
+            if not isinstance(blob, (bytes, bytearray)):
+                return None
+            b64 = base64.b64encode(blob).decode("ascii")
+            img = tk.PhotoImage(data=b64)
             w = max(1, img.width())
             h = max(1, img.height())
             factor = max(1, int(max(w, h) / 32))

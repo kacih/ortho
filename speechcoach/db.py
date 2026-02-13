@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 import threading
 from typing import Any, Dict, List, Optional
@@ -13,6 +14,7 @@ CREATE TABLE IF NOT EXISTS children(
   sex TEXT,
   grade TEXT,
   avatar_path TEXT,
+  avatar_blob BLOB,
   created_at TEXT
 );
 
@@ -71,6 +73,7 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     add_cols = [
         # Children schema upgrades (older DBs might miss these)
         ("children", "avatar_path", "TEXT"),
+        ("children", "avatar_blob", "BLOB"),
         ("children", "created_at", "TEXT"),
         ("sessions", "features_json", "TEXT"),
         ("sessions", "acoustic_score", "REAL"),
@@ -84,6 +87,30 @@ def migrate_db(conn: sqlite3.Connection) -> None:
         if not _column_exists(cur, table, col):
             cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
     conn.commit()
+
+    # Best-effort backfill: if avatar_blob is empty but avatar_path points to an existing file,
+    # store the binary in DB to avoid runtime dependency on filesystem paths.
+    try:
+        if _column_exists(cur, "children", "avatar_blob") and _column_exists(cur, "children", "avatar_path"):
+            cur.execute("SELECT id, avatar_path, avatar_blob FROM children")
+            rows = cur.fetchall()
+            for r in rows:
+                try:
+                    if r[2] is not None:
+                        continue
+                    p = (r[1] or "").strip()
+                    if not p or not os.path.exists(p):
+                        continue
+                    with open(p, "rb") as f:
+                        blob = f.read()
+                    if blob:
+                        cur.execute("UPDATE children SET avatar_blob=? WHERE id=?", (sqlite3.Binary(blob), r[0]))
+                except Exception:
+                    continue
+            conn.commit()
+    except Exception:
+        # Never fail migration because of avatar backfill
+        pass
 
 class DataLayer:
     """Repository SQLite (thread-safe)."""
@@ -123,9 +150,17 @@ class DataLayer:
     def add_child(self, name: str, age: Optional[int], sex: str, grade: str, avatar_path: str) -> int:
         with self.lock:
             cur = self.conn.cursor()
+            blob = None
+            try:
+                p = (avatar_path or "").strip()
+                if p and os.path.exists(p):
+                    with open(p, "rb") as f:
+                        blob = f.read()
+            except Exception:
+                blob = None
             cur.execute(
-                "INSERT INTO children(name, age, sex, grade, avatar_path, created_at) VALUES(?,?,?,?,?,?)",
-                (name, age, sex, grade, avatar_path, now_iso())
+                "INSERT INTO children(name, age, sex, grade, avatar_path, avatar_blob, created_at) VALUES(?,?,?,?,?,?,?)",
+                (name, age, sex, grade, avatar_path, sqlite3.Binary(blob) if blob else None, now_iso())
             )
             self.conn.commit()
             return cur.lastrowid
@@ -133,9 +168,17 @@ class DataLayer:
     def update_child(self, child_id: int, name: str, age: Optional[int], sex: str, grade: str, avatar_path: str):
         with self.lock:
             cur = self.conn.cursor()
+            blob = None
+            try:
+                p = (avatar_path or "").strip()
+                if p and os.path.exists(p):
+                    with open(p, "rb") as f:
+                        blob = f.read()
+            except Exception:
+                blob = None
             cur.execute(
-                "UPDATE children SET name=?, age=?, sex=?, grade=?, avatar_path=? WHERE id=?",
-                (name, age, sex, grade, avatar_path, child_id)
+                "UPDATE children SET name=?, age=?, sex=?, grade=?, avatar_path=?, avatar_blob=? WHERE id=?",
+                (name, age, sex, grade, avatar_path, sqlite3.Binary(blob) if blob else None, child_id)
             )
             self.conn.commit()
 
