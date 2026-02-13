@@ -79,16 +79,33 @@ class SpeechCoachApp(tk.Tk):
             pass
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
-
+    
     def on_close(self):
+        """Fermeture propre de l'application (audio/session/DB) puis destruction Tk."""
+        # Stopper une session si elle existe
         try:
-            self.session_manager.stop()
+            if hasattr(self, "session_manager") and self.session_manager:
+                self.session_manager.stop()
+        except Exception:
+            pass
+
+        # Stopper audio/tts si vous avez des objets dédiés
+        try:
+            if hasattr(self, "audio") and self.audio:
+                self.audio.stop_all()  # ou .stop() selon votre implémentation
+        except Exception:
+            pass
+
+        # Fermer la DB si besoin
+        try:
+            if hasattr(self, "dl") and self.dl:
+                self.dl.close()  # si DataLayer expose close(); sinon laisser
         except Exception:
             pass
 
         self.destroy()
 
-    
+
     def open_audio_devices(self):
         """Open audio device selection (micro + output)."""
         AudioDevicesDialog(self, self.audio)
@@ -151,10 +168,16 @@ class SpeechCoachApp(tk.Tk):
         )
         self.chk_child_mode.pack(side="left", padx=6)
 
-        ttk.Label(top, text="Tours:").pack(side="left")
-        self.var_rounds = tk.IntVar(value=6)
-        self.spin_rounds = ttk.Spinbox(top, from_=1, to=20, textvariable=self.var_rounds, width=4)
+        ttk.Label(top, text="Durée (min):").pack(side="left")
+        self.var_minutes = tk.IntVar(value=3)
+        self.spin_minutes = ttk.Spinbox(top, from_=1, to=20, textvariable=self.var_minutes, width=4, command=self.on_duration_change)
+        self.spin_minutes.pack(side="left", padx=6)
+
+        ttk.Label(top, text="Tours (auto):").pack(side="left")
+        self.var_rounds = tk.IntVar(value=3)
+        self.spin_rounds = ttk.Spinbox(top, from_=1, to=20, textvariable=self.var_rounds, width=4, state="readonly")
         self.spin_rounds.pack(side="left", padx=6)
+        
 
         self.btn_start = ttk.Button(top, text="▶️ Démarrer", command=self.start_game)
         self.btn_start.pack(side="left", padx=6)
@@ -221,38 +244,36 @@ class SpeechCoachApp(tk.Tk):
         print("GRAPH:", session_id, child_id, phoneme)
 
 
-    def on_toggle_mode(self):
-        """Switch between parent mode (manual rounds) and child mode (auto session)."""
-        is_child = bool(self.var_child_mode.get()) if getattr(self, "var_child_mode", None) is not None else False
+    
+    def on_duration_change(self):
+        """Recompute auto rounds when duration changes."""
+        try:
+            if not self.current_child_id:
+                return
+            child = self.dl.get_child(int(self.current_child_id))
+            plan = build_session_plan(child, duration_min=int(self.var_minutes.get() or 3))
+            self.var_rounds.set(int(plan.rounds))
+        except Exception:
+            pass
 
+
+    def on_toggle_mode(self):
+        # In child mode, we hide advanced controls; duration remains user-configurable.
+        try:
+            is_child = bool(self.var_child_mode.get())
+        except Exception:
+            is_child = False
+
+        # pause/replay disabled in child mode (UX)
         if is_child:
-            # Update button label and lock advanced controls
-            try:
-                self.btn_start.config(text="🎮 Jouer (3 min)")
-            except Exception:
-                pass
-            try:
-                self.spin_rounds.config(state="disabled")
-            except Exception:
-                pass
-            # Pause/replay are advanced: keep available only for parent mode
-            try:
-                self.btn_pause.config(state="disabled")
-                self.btn_replay.config(state="disabled")
-            except Exception:
-                pass
-            self.set_status("Mode enfant activé : session guidée (3 min).")
+            self.btn_pause.config(state="disabled")
+            self.btn_replay.config(state="disabled")
+            self.btn_start.config(text="🎮 Jouer")
         else:
-            try:
-                self.btn_start.config(text="▶️ Démarrer")
-            except Exception:
-                pass
-            try:
-                self.spin_rounds.config(state="normal")
-            except Exception:
-                pass
-            # Buttons state will be re-enabled on start_game
-            self.set_status("Mode parent : réglages manuels.")
+            self.btn_start.config(text="▶️ Démarrer")
+        # Always recompute rounds when duration or child changes
+        self.on_duration_change()
+
 
     def start_session_auto(self, duration_min: int = 10):
         """Start a short, guided session adapted to the selected child."""
@@ -379,7 +400,7 @@ class SpeechCoachApp(tk.Tk):
                     child_level=level,
                 )
 
-                if card is not None and self.dl.add_child_card_v2(int(self.current_child_id), card.id):
+                if card is not None and self.dl.add_child_card_v2(int(self.current_child_id), card):
                     self._show_card_reward(card, prog)
                 else:
                     # Collection complete for eligible cards (or insert ignored)
@@ -410,9 +431,19 @@ class SpeechCoachApp(tk.Tk):
             ttk.Label(frm, text=title, font=("Segoe UI", 14, "bold")).pack(pady=(0,10))
 
             # Image
-            img_path = Path(RESOURCES_DIR) / "cards" / str(getattr(card, "icon_path", "") or "")
+            import base64
+
             photo = None
-            if img_path.exists():
+            try:
+                b = getattr(card, "icon_bytes", None)
+                if b:
+                    b64 = base64.b64encode(b).decode("ascii")
+                    photo = tk.PhotoImage(data=b64)
+            except Exception:
+                photo = None
+
+            img_path = Path(RESOURCES_DIR) / "cards" / str(getattr(card, "icon_path", "") or "")
+            if photo is None and img_path.exists():
                 try:
                     photo = tk.PhotoImage(file=str(img_path))
                     # reduce to ~140px

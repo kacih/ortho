@@ -53,6 +53,7 @@ class GameController:
 
         self.child_id: Optional[int] = None
         self.state = GameState.IDLE
+        self._paused_prev_state = GameState.PLAYING
 
         self._thread: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -110,10 +111,12 @@ class GameController:
         self._stop_event.set()
 
     def toggle_pause(self):
+        # Keep track of the previous active state so resume returns to the right phase.
         if self.state == GameState.PAUSED:
-            self.state = GameState.PLAYING
+            self.state = getattr(self, '_paused_prev_state', GameState.PLAYING) or GameState.PLAYING
             self._status("▶️ Reprise")
-        elif self.state in (GameState.PLAYING, GameState.LISTENING):
+        elif self.state in (GameState.PLAYING, GameState.LISTENING, GameState.ANALYZING):
+            self._paused_prev_state = self.state
             self.state = GameState.PAUSED
             self._status("⏸️ Pause")
 
@@ -292,8 +295,9 @@ class GameController:
 
         finally:
             self.state = GameState.IDLE
-            if self.on_end:
-                self._dispatch(self.on_end)
+        self._paused_prev_state = GameState.PLAYING
+        if self.on_end:
+            self._dispatch(self.on_end)
 
     # ==========================================================
     # UTILS

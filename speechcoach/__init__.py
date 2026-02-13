@@ -1,2 +1,2 @@
-__version__ = "7.10.4"
+__version__ = "7.12.0"
 __all__ = ["config", "models", "db", "stories", "audio", "tts", "asr", "analysis", "game"]

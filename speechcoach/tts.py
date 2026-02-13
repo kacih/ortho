@@ -1,9 +1,11 @@
 # speechcoach/tts.py
+import os
 import platform
 import subprocess
 import threading
 import queue
 import logging
+logger = logging.getLogger("speechcoach.tts")
 from typing import Optional, Dict, Any, List
 
 # pyttsx3 optionnel (instable selon Python/Win). Conservé mais OFF par défaut.
@@ -75,6 +77,32 @@ def list_voices() -> List[str]:
         log.exception("list_voices failed")
         return []
 
+def list_edge_voices(locale_prefix: str = "fr-") -> List[str]:
+    """Return available Edge Neural voices (best-effort).
+    Non-blocking philosophy: on any error, return [].
+    """
+    try:
+        import asyncio
+        import edge_tts  # type: ignore
+    except Exception:
+        return []
+
+    async def _run():
+        vs = await edge_tts.list_voices()
+        out = []
+        for v in vs or []:
+            name = v.get("ShortName") or v.get("Name")
+            locale = v.get("Locale") or ""
+            if name and (not locale_prefix or str(locale).lower().startswith(locale_prefix.lower())):
+                out.append(str(name))
+        return sorted(set(out))
+
+    try:
+        return asyncio.run(_run())
+    except Exception:
+        return []
+
+
 
 
 def _play_wav_powershell(path: str) -> None:
@@ -97,13 +125,53 @@ def _play_wav_powershell(path: str) -> None:
 
 
 def _speak_edge_tts_to_wav(text: str, voice: str, out_path: str) -> bool:
-    """Best-effort Edge Neural TTS. Returns True on success.
-    Non-blocking guarantee is handled by the caller (fallback if False).
+    """Best-effort Edge Neural TTS (non-blocking: caller falls back if False).
+
+    We intentionally use the edge-tts CLI via subprocess because the Python API
+    varies across versions. CLI supports --format for RIFF PCM (wav) output.
     """
     try:
-        import asyncio
-        import edge_tts  # type: ignore
+        import sys
     except Exception:
+        return False
+
+    text = (text or "").strip()
+    if not text:
+        return False
+
+    voice = (voice or "").strip() or "fr-FR-DeniseNeural"
+
+    try:
+        out_dir = os.path.dirname(out_path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+        cmd = [
+            sys.executable,
+            "-m",
+            "edge_tts",
+            "--voice",
+            voice,
+            "--text",
+            text,
+            "--write-media",
+            out_path,
+            "--format",
+            "riff-24khz-16bit-mono-pcm",
+        ]
+
+        logger.info("EDGE speak start voice=%s text_len=%s out=%s", voice, len(text), out_path)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+
+        if p.returncode != 0:
+            logger.warning("EDGE speak failed rc=%s stderr=%s", p.returncode, (p.stderr or "").strip())
+            return False
+
+        ok = os.path.exists(out_path) and os.path.getsize(out_path) > 0
+        logger.info("EDGE speak done ok=%s size=%s", ok, os.path.getsize(out_path) if os.path.exists(out_path) else 0)
+        return ok
+    except Exception as e:
+        logger.exception("EDGE speak exception: %s", e)
         return False
 
     text = (text or "").strip()

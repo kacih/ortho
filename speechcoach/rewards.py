@@ -26,18 +26,35 @@ class Card:
     rarity: str           # common|rare|legendary
     min_level: int
     icon_path: str        # relative to resources/cards
+    icon_bytes: bytes = b""  # PNG bytes (optional)
 
 def load_catalog(cards_catalog_path: str) -> List[Card]:
     p = Path(cards_catalog_path)
     data = json.loads(p.read_text(encoding="utf-8"))
     out: List[Card] = []
+    # load icons from resources folder (best-effort)
+    base_dir = p.parent
     for r in data:
+        icon_rel = str(r.get("icon") or "")
+        icon_bytes = b""
+        try:
+            icon_path = (base_dir / icon_rel)
+            if not icon_path.exists():
+                # try relative to global resources/cards
+                from .config import RESOURCES_DIR
+                icon_path = Path(RESOURCES_DIR) / "cards" / icon_rel
+            if icon_path.exists():
+                icon_bytes = icon_path.read_bytes()
+        except Exception:
+            icon_bytes = b""
+
         out.append(Card(
             id=str(r.get("id")),
             name=str(r.get("name")),
             rarity=str(r.get("rarity")),
             min_level=int(r.get("min_level", 1)),
-            icon_path=str(r.get("icon")),
+            icon_path=icon_rel,
+            icon_bytes=icon_bytes,
         ))
     return out
 

@@ -95,10 +95,12 @@ CREATE TABLE IF NOT EXISTS child_cards_v2(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   child_id INTEGER NOT NULL,
   card_id TEXT NOT NULL,
+  card_name TEXT,
+  rarity TEXT,
+  icon_blob BLOB,
   obtained_at TEXT,
   UNIQUE(child_id, card_id),
-  FOREIGN KEY(child_id) REFERENCES children(id),
-  FOREIGN KEY(card_id) REFERENCES cards_catalog(id)
+  FOREIGN KEY(child_id) REFERENCES children(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_child_cards_v2_child
@@ -114,7 +116,19 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     cur = conn.cursor()
     cur.executescript(DDL)
 
-    # ---- Seed cards_catalog if empty (best-effort)
+    
+    # ---- Ensure child_cards_v2 snapshot columns exist (tolerant migrations)
+    try:
+        if not _column_exists(cur, "child_cards_v2", "card_name"):
+            cur.execute("ALTER TABLE child_cards_v2 ADD COLUMN card_name TEXT")
+        if not _column_exists(cur, "child_cards_v2", "rarity"):
+            cur.execute("ALTER TABLE child_cards_v2 ADD COLUMN rarity TEXT")
+        if not _column_exists(cur, "child_cards_v2", "icon_blob"):
+            cur.execute("ALTER TABLE child_cards_v2 ADD COLUMN icon_blob BLOB")
+    except Exception:
+        pass
+
+# ---- Seed cards_catalog if empty (best-effort)
     try:
         cur.execute("SELECT COUNT(*) FROM cards_catalog")
         n = int(cur.fetchone()[0] or 0)
@@ -298,11 +312,10 @@ class DataLayer:
         with self.lock:
             cur = self.conn.cursor()
             cur.execute(
-                """SELECT cc.id as card_id, cc.name, cc.icon_path, cc.rarity, cc.min_level, c2.obtained_at
-                   FROM child_cards_v2 c2
-                   JOIN cards_catalog cc ON cc.id = c2.card_id
-                   WHERE c2.child_id=?
-                   ORDER BY datetime(REPLACE(c2.obtained_at,'T',' ')) DESC""",
+                """SELECT card_id, card_name, icon_blob, rarity, obtained_at
+                   FROM child_cards_v2
+                   WHERE child_id=?
+                   ORDER BY datetime(REPLACE(obtained_at,'T',' ')) DESC""",
                 (int(child_id),)
             )
             return cur.fetchall()
@@ -313,15 +326,19 @@ class DataLayer:
             cur.execute("SELECT card_id FROM child_cards_v2 WHERE child_id=?", (int(child_id),))
             return [r[0] for r in cur.fetchall()]
 
-    def add_child_card_v2(self, child_id: int, card_id: str) -> bool:
+    def add_child_card_v2(self, child_id: int, card) -> bool:
+        card_id = getattr(card, 'id', None) or (card.get('id') if isinstance(card, dict) else None)
         if not card_id:
             return False
+        card_name = getattr(card, 'name', None) or (card.get('name') if isinstance(card, dict) else None)
+        rarity = getattr(card, 'rarity', None) or (card.get('rarity') if isinstance(card, dict) else None)
+        icon_blob = getattr(card, 'icon_bytes', None) or (card.get('icon_bytes') if isinstance(card, dict) else None) or b""
         with self.lock:
             cur = self.conn.cursor()
             try:
                 cur.execute(
-                    "INSERT OR IGNORE INTO child_cards_v2(child_id, card_id, obtained_at) VALUES(?,?,?)",
-                    (int(child_id), str(card_id).strip(), now_iso())
+                    "INSERT OR IGNORE INTO child_cards_v2(child_id, card_id, card_name, rarity, icon_blob, obtained_at) VALUES(?,?,?,?,?,?)",
+                    (int(child_id), str(card_id).strip(), card_name, rarity, sqlite3.Binary(icon_blob), now_iso())
                 )
                 self.conn.commit()
                 return cur.rowcount > 0

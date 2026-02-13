@@ -2,7 +2,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 from speechcoach.settings import SettingsManager
-from speechcoach.tts import list_voices
+from speechcoach.tts import list_voices, list_edge_voices
 
 
 class AudioSettingsDialog(tk.Toplevel):
@@ -26,14 +26,15 @@ class AudioSettingsDialog(tk.Toplevel):
             state="readonly",
         )
         self.backend_cb.grid(row=0, column=1, padx=5, pady=5)
+        self.backend_cb.bind('<<ComboboxSelected>>', lambda e: self.refresh_voices())
         ttk.Label(self, text="system = voix Windows | edge = voix Neural (Internet)").grid(
             row=1, column=0, columnspan=2, sticky="w", padx=5, pady=(0, 8)
         )
 
-        voices = list_voices()
+        voices = list_voices() if self.backend.get() == 'system' else list_edge_voices('fr-')
 
         # Voix
-        ttk.Label(self, text="Voix (system)").grid(row=2, column=0, sticky="w", padx=5, pady=5)
+        ttk.Label(self, text="Voix").grid(row=2, column=0, sticky="w", padx=5, pady=5)
         self.voice = tk.StringVar(value=self.settings.get("tts_voice", ""))
         self.voice_cb = ttk.Combobox(
             self, textvariable=self.voice,
@@ -60,6 +61,20 @@ class AudioSettingsDialog(tk.Toplevel):
         ttk.Button(btn, text="Fermer", command=self.close).pack(side="left", padx=5)
 
         self.protocol("WM_DELETE_WINDOW", self.close)
+
+    
+    def refresh_voices(self):
+        backend = self.backend.get() or "system"
+        voices = list_voices() if backend == "system" else list_edge_voices("fr-")
+        self.voice_cb.configure(values=voices)
+        # If current voice not in list, clear it to avoid confusing saves
+        if self.voice.get() and voices and self.voice.get() not in voices:
+            self.voice.set("")
+        # Update hint label text
+        try:
+            self.lbl_voice_hint.config(text=f"{backend} : {len(voices)} voix détectée(s)")
+        except Exception:
+            pass
 
     def current(self):
         return {
