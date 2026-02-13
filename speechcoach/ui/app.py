@@ -87,7 +87,6 @@ class SpeechCoachApp(tk.Tk):
         m_audio.add_command(label="Audio (micro/sortie)…", command=self.open_audio_devices)
         m_audio.add_command(label="Voix TTS…", command=self.open_tts_settings)
         m_audio.add_separator()
-        m_audio.add_command(label="Warmup TTS (thread)", command=lambda: threading.Thread(target=self.audio.tts.warmup, daemon=True).start())
         menubar.add_cascade(label="Audio", menu=m_audio)
 
         m_dash = tk.Menu(menubar, tearoff=0)
