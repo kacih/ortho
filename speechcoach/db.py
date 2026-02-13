@@ -90,6 +90,15 @@ class DataLayer:
         self.conn.row_factory = sqlite3.Row
         self.lock = threading.Lock()
         migrate_db(self.conn)
+    def get_audio_path_by_session_id(self, session_id: int) -> str | None:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT audio_path FROM sessions WHERE id = ?",
+                (session_id,)
+            )
+            row = cur.fetchone()
+            return row[0] if row else None
 
     def close(self):
         try:
@@ -151,14 +160,16 @@ class DataLayer:
     def fetch_sessions_filtered(self, child_id: Optional[int]=None, limit: int=500):
         with self.lock:
             cur = self.conn.cursor()
+            order = "ORDER BY datetime(REPLACE(created_at,'T',' ')) DESC, id DESC"
             if child_id:
                 cur.execute(
-                    "SELECT * FROM sessions WHERE child_id=? ORDER BY created_at DESC LIMIT ?",
+                    f"SELECT * FROM sessions WHERE child_id=? {order} LIMIT ?",
                     (child_id, limit)
                 )
             else:
-                cur.execute("SELECT * FROM sessions ORDER BY created_at DESC LIMIT ?", (limit,))
+                cur.execute(f"SELECT * FROM sessions {order} LIMIT ?", (limit,))
             return cur.fetchall()
+
 
     def delete_sessions_by_ids(self, ids: List[int]):
         if not ids:

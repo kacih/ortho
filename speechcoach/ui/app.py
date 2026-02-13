@@ -174,8 +174,17 @@ class SpeechCoachApp(tk.Tk):
             self.lbl_child.config(text=f"id={child_id}")
 
     def open_dashboard(self):
-        DashboardDialog(self, self.dl, self.audio, self.current_child_id)
+        DashboardDialog(
+            self,
+            self.dl,
+            self.audio,
+            self.current_child_id,
+            on_pick=self.show_evolution_graph
+        )
 
+    def show_evolution_graph(self, session_id, child_id, phoneme):
+        print("GRAPH:", session_id, child_id, phoneme)
+    
     def open_audio_settings(self):
         AudioSettingsDialog(self, self.audio)
 
