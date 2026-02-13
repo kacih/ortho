@@ -1,7 +1,7 @@
 {
   "product": {
     "name": "Speech Coach",
-    "app_version": "7.9.1",
+    "app_version": "7.10.4",
     "channel": "stable",
     "git": {
       "commit": "abc1234",
@@ -17,12 +17,12 @@
     "dataset_semver": "2.1.0",
     "asr_engine": {
       "name": "whisper-local",
-      "version": "1.6.0",
+      "version": "7.10.2",
       "language": "fr-FR"
     },
     "tts_engine": {
       "name": "windows-powershell-tts",
-      "version": "1.0.0",
+      "version": "7.10.2",
       "voice": "fr-FR"
     }
   },

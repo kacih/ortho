@@ -222,6 +222,7 @@ class ChildManagerDialog(tk.Toplevel):
             "avatar_file": vars_["avatar"].get().strip(),
         }
 
+    
     def _read_avatar_bytes(self, path: str):
         p = (path or "").strip()
         if not p:
@@ -240,7 +241,7 @@ class ChildManagerDialog(tk.Toplevel):
             return
         avatar_bytes = self._read_avatar_bytes(data.pop("avatar_file", ""))
         self.dl.add_child(
-            name=data["name"],
+            name=data.get("name",""),
             age=data.get("age"),
             sex=data.get("sex",""),
             grade=data.get("grade",""),
@@ -259,15 +260,9 @@ class ChildManagerDialog(tk.Toplevel):
         if not data:
             return
         avatar_bytes = self._read_avatar_bytes(data.pop("avatar_file", ""))
-        # If no avatar selected, keep existing blob (do not overwrite with NULL)
-        if avatar_bytes is None:
-            try:
-                avatar_bytes = rows[0]["avatar_blob"] if "avatar_blob" in rows[0].keys() else None
-            except Exception:
-                avatar_bytes = None
         self.dl.update_child(
             cid,
-            name=data["name"],
+            name=data.get("name",""),
             age=data.get("age"),
             sex=data.get("sex",""),
             grade=data.get("grade",""),

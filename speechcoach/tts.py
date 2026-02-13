@@ -2,6 +2,7 @@
 import platform
 import subprocess
 import threading
+import queue
 import logging
 from typing import Optional, Dict, Any, List
 
@@ -17,13 +18,15 @@ CHILD_VOICE_PROFILES = {
     "warm": {"rate_ps": 0, "volume": 100},
     "gentle": {"rate_ps": -1, "volume": 100},
     "energetic": {"rate_ps": 1, "volume": 100},
+    "playful": {"rate_ps": 2, "volume": 100},
+    "storyteller": {"rate_ps": 0, "volume": 100},
 }
 
 CHILD_PROMPTS = [
     "Super ! Tu peux commencer à répéter.",
-    "À toi de jouer, répète la phrase.",
-    "C'est parti ! Répète doucement la phrase.",
-    "Bravo, on y va ! Tu peux répéter maintenant.",
+    "Top ! Quand tu es prêt, tu répètes.",
+    "Génial ! Vas-y doucement, répète la phrase.",
+    "Bravo ! On y va : tu peux répéter maintenant.",
 ]
 log = logging.getLogger(__name__)
 
@@ -167,6 +170,11 @@ class TTSEngine:
         self._is_windows = platform.system().lower() == "windows"
         self._pytts = None
 
+        # ---- Serial TTS queue (ensures ordered prompts)
+        self._tts_queue: "queue.Queue[tuple]" = queue.Queue()
+        self._tts_worker = threading.Thread(target=self._tts_loop, daemon=True)
+        self._tts_worker.start()
+
     def set_rate(self, rate: int):
         self.rate = int(rate)
 
@@ -184,6 +192,44 @@ class TTSEngine:
     def warmup(self):
         self.speak(" ")
 
+    def say(self, text: str, *, block: bool = False):
+        """Queue a TTS utterance (serialized). If block=True, wait until spoken."""
+        ev = threading.Event()
+        self._tts_queue.put(("speak", text, None, ev))
+        if block:
+            ev.wait(timeout=30)
+
+    def say_child(self, text: str, *, style: str = "warm", block: bool = False):
+        ev = threading.Event()
+        self._tts_queue.put(("child", text, style, ev))
+        if block:
+            ev.wait(timeout=30)
+
+    def say_child_prompt(self, *, style: str = "warm", block: bool = False):
+        ev = threading.Event()
+        self._tts_queue.put(("child_prompt", "", style, ev))
+        if block:
+            ev.wait(timeout=30)
+
+    def _tts_loop(self):
+        while True:
+            kind, text, style, ev = self._tts_queue.get()
+            try:
+                if kind == "speak":
+                    self.speak(text)
+                elif kind == "child":
+                    self.speak_child(text, style=style or "warm")
+                elif kind == "child_prompt":
+                    self.speak_child_prompt(style=style or "warm")
+            except Exception:
+                # Never let TTS break the app
+                pass
+            finally:
+                try:
+                    ev.set()
+                except Exception:
+                    pass
+
     def speak_child(self, text: str, style: str = "warm"):
         """Speak with kid-friendly settings (best-effort across Windows voices)."""
         prof = CHILD_VOICE_PROFILES.get(style, CHILD_VOICE_PROFILES["warm"])
@@ -193,7 +239,7 @@ class TTSEngine:
         # We keep the configured voice if any; voice choice is user/system dependent.
         if self._is_windows:
             with self._lock:
-                _speak_powershell(text, self.voice, rate_ps, vol)
+                _speak_powershell(' ' + text, self.voice, rate_ps, vol)
         else:
             # fallback
             self.speak(text)

@@ -1,4 +1,5 @@
 import os
+import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Optional, List, Dict, Any
@@ -25,6 +26,23 @@ class DashboardDialog(tk.Toplevel):
         ttk.Label(top, text=f"DB: {dl.db_path}").pack(side="left")
         ttk.Button(top, text="Rafraîchir", command=self.refresh).pack(side="left", padx=8)
         ttk.Button(top, text="Supprimer ligne(s)", command=self.delete_selected).pack(side="left", padx=8)
+
+        # ---- Filtres (enfant + phonème)
+        ttk.Label(top, text="Enfant:").pack(side="left", padx=(20, 4))
+        self.child_filter = tk.StringVar(value="(sélection)")
+        self.child_combo = ttk.Combobox(top, textvariable=self.child_filter, state="readonly", width=22)
+        self.child_combo.pack(side="left")
+        self.child_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+
+        ttk.Label(top, text="Phonème:").pack(side="left", padx=(14, 4))
+        self.phoneme_filter = tk.StringVar(value="Tous")
+        self.phoneme_combo = ttk.Combobox(top, textvariable=self.phoneme_filter, state="readonly", width=14)
+        self.phoneme_combo.pack(side="left")
+        self.phoneme_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh())
+
+        ttk.Button(top, text="Réinitialiser", command=self.reset_filters).pack(side="left", padx=10)
+
+        self._child_choices = []  # list of (label, child_id)
 
                 
         # ---- Zone centrale (table + graphe)
@@ -132,201 +150,235 @@ class DashboardDialog(tk.Toplevel):
 
         self._sort_desc[col_id] = not desc
 
+    def reset_filters(self):
+        self.child_filter.set("(sélection)")
+        self.phoneme_filter.set("Tous")
+        self.refresh()
+
+    def _get_selected_child_id(self) -> Optional[int]:
+        label = (self.child_filter.get() or "").strip()
+        if label == "Tous":
+            return None
+        if label == "(sélection)":
+            return self.child_id
+        try:
+            m = re.search(r"#(\d+)\)", label)
+            if m:
+                return int(m.group(1))
+        except Exception:
+            pass
+        return self.child_id
+
+    def _get_selected_phoneme(self) -> Optional[str]:
+        p = (self.phoneme_filter.get() or "").strip()
+        if not p or p == "Tous":
+            return None
+        if p == "(non renseigné)":
+            return ""
+        return p
+
     def refresh(self):
-        # Nettoyage table + caches
+        # ---- Update filter choices (child / phoneme)
+        try:
+            children = self.dl.list_children()
+        except Exception:
+            children = []
+
+        child_values = ["(sélection)", "Tous"]
+        for r in children:
+            try:
+                child_values.append(f'{r["name"]} (#{r["id"]})')
+            except Exception:
+                pass
+        child_values = list(dict.fromkeys(child_values))
+        self.child_combo["values"] = child_values
+        if self.child_filter.get() not in child_values:
+            self.child_filter.set("(sélection)")
+
+        sel_child_id = self._get_selected_child_id()
+
+        try:
+            phonemes = self.dl.list_distinct_phonemes(child_id=sel_child_id)
+        except Exception:
+            phonemes = []
+        ph_values = ["Tous"]
+        if "" in phonemes:
+            ph_values.append("(non renseigné)")
+        ph_values += [p for p in phonemes if p]
+        ph_values = list(dict.fromkeys(ph_values))
+        self.phoneme_combo["values"] = ph_values
+        if self.phoneme_filter.get() not in ph_values:
+            self.phoneme_filter.set("Tous")
+
+        sel_ph = self._get_selected_phoneme()
+
+        # ---- Clear table + caches
         for i in self.tree.get_children():
             self.tree.delete(i)
         self._audio_by_iid.clear()
         self._sort_cache.clear()
 
-        rows = self.dl.fetch_sessions_filtered(child_id=self.child_id, limit=800)
+        # ---- Fetch & render
+        rows = self.dl.fetch_sessions_filtered(child_id=sel_child_id, phoneme_target=sel_ph, limit=800)
         for r in rows:
             session_id = self._safe_int(r["id"])
             child_id = self._safe_int(r["child_id"])
 
-            dt = self._parse_created_at(r["created_at"])
             created_fr = self._fmt_created_at_fr(r["created_at"])
 
             wer_v = float(r["wer"] if r["wer"] is not None else 1.0)
             final_v = float(r["final_score"] if r["final_score"] is not None else 0.0)
+            phon = (r["phoneme_target"] or "").strip()
 
-            # Indicateur + tag couleur
+            # Score tag
             if final_v >= 0.85:
                 ind, tag = "🟢", "score_green"
             elif final_v >= 0.70:
                 ind, tag = "🟡", "score_yellow"
-            elif final_v >= 0.55:
+            elif final_v >= 0.50:
                 ind, tag = "🟠", "score_orange"
             else:
                 ind, tag = "🔴", "score_red"
 
-            story_title = r["story_title"] or ""
-            expected = (r["expected_text"] or "")[:120]
-            recognized = (r["recognized_text"] or "")[:120]
-            phoneme = r["phoneme_target"] or ""
+            expected = (r["expected_text"] or "").strip()
+            recognized = (r["recognized_text"] or "").strip()
+            story = (r["story_title"] or r["story_id"] or "").strip()
 
-            iid = self.tree.insert(
+            iid = f"sess_{session_id}"
+            self.tree.insert(
                 "",
                 "end",
+                iid=iid,
                 values=(
                     session_id,
                     created_fr,
                     child_id,
-                    f"{ind} {story_title}",
-                    expected,
-                    recognized,
-                    f"{wer_v:.2f}",
-                    f"{final_v:.2f}",
-                    phoneme,
+                    story,
+                    expected[:80],
+                    recognized[:80],
+                    f"{wer_v:.3f}",
+                    f"{ind} {final_v:.2f}",
+                    phon,
                 ),
                 tags=(tag,),
             )
 
-            # Cache audio + cache tri typé (évite le tri alphanumérique)
-            self._audio_by_iid[iid] = (r["audio_path"] or "")
+            # cache typed values for sorting
+            dt = self._parse_created_at(r["created_at"])
             self._sort_cache[iid] = {
                 "id": session_id,
                 "created_at": dt or datetime.min,
                 "child": child_id,
-                "story": (story_title or "").lower(),
+                "story": story.lower(),
                 "expected": expected.lower(),
                 "recognized": recognized.lower(),
-                "wer": float(wer_v),
-                "final": float(final_v),
-                "phoneme": (phoneme or "").lower(),
+                "wer": wer_v,
+                "final": final_v,
+                "phoneme": phon.lower(),
             }
-    def _parse_created_at(self, s: str):
+
+            ap = (r["audio_path"] or "").strip()
+            if ap:
+                self._audio_by_iid[iid] = ap
+
+        # refresh graph from the currently selected row (or first row)
+        self._plot_evolution()
+
+    def _parse_created_at(self, s: Any) -> Optional[datetime]:
         if not s:
             return None
-        s = str(s).strip().replace("T", " ")
+        s = str(s).strip().replace("Z", "+00:00")
         try:
-            return datetime.fromisoformat(s)
+            return datetime.fromisoformat(s.replace("T", " "))
         except Exception:
             return None
 
-    def _fmt_created_at_fr(self, s: str) -> str:
+    def _fmt_created_at_fr(self, s: Any) -> str:
         dt = self._parse_created_at(s)
-        return dt.strftime("%d/%m/%Y %H:%M") if dt else (s or "")
+        if not dt:
+            return str(s) if s else ""
+        return dt.strftime("%d/%m/%Y %H:%M:%S")
 
     def _selected_ids(self) -> List[int]:
         ids = []
-        for item in self.tree.selection():
-            vals = self.tree.item(item, "values")
-            if vals:
-                ids.append(int(vals[0]))
+        for iid in self.tree.selection():
+            try:
+                ids.append(int(self.tree.set(iid, "id")))
+            except Exception:
+                pass
         return ids
 
     def delete_selected(self):
         ids = self._selected_ids()
         if not ids:
-            messagebox.showinfo("Suppression", "Aucune ligne sélectionnée.")
             return
-        if not messagebox.askyesno("Confirmer", f"Supprimer {len(ids)} ligne(s) ?"):
+        if not messagebox.askyesno("Confirmer", f"Supprimer {len(ids)} ligne(s) du dashboard ?"):
             return
-        self.dl.delete_sessions_by_ids(ids)
-        self.refresh()
-        # UX: rester sur le TDB après suppression (évite de revenir visuellement à la fenêtre principale)
         try:
-            self.lift()
-            self.focus_force()
-        except Exception:
-            pass
+            self.dl.delete_sessions_by_ids(ids)
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Suppression impossible: {e}")
+            return
+        self.refresh()
 
     def replay_selected(self):
-        sel = self.tree.selection()
-        if not sel:
+        r = self._get_selected_row()
+        if not r:
             return
-        iid = sel[0]
-        audio_path = self._audio_by_iid.get(iid, "")
+        ap = r.get("audio_path") or ""
+        if not ap:
+            return
+        try:
+            self.audio.play_file(ap)
+        except Exception as e:
+            messagebox.showerror("Audio", f"Lecture impossible: {e}")
 
-        if audio_path and os.path.exists(audio_path):
-            self.audio.play_wav(audio_path)
-        else:
-            messagebox.showwarning("Audio introuvable", "Fichier audio manquant pour cette session.")
-
-    def _get_selected_row(self):
+    def _get_selected_row(self) -> Optional[Dict[str, Any]]:
         sel = self.tree.selection()
         if not sel:
             return None
-        vals = self.tree.item(sel[0], "values")
-        return vals
-
-    def _on_row_double_click(self, event=None):
-        # Double-clic: rejoue l'audio + conserve le comportement de sélection (graph)
-        self.replay_selected()
-        self._on_row_select(event)
-    
-    def _on_row_select(self, event=None):
-        sel = self.tree.selection()
-        if not sel:
-            return
-
-        vals = self.tree.item(sel[0], "values")
-        # Colonnes actuelles du TDB :
-        # ("id","created","child","story","expected","recognized","wer","final","phoneme")
+        iid = sel[0]
+        session_id = None
         try:
-            child_id = int(vals[2])
+            session_id = int(self.tree.set(iid, "id"))
         except Exception:
-            return
+            return None
 
-        phoneme = (vals[8] or "").strip() or None
-        self._plot_evolution(child_id, phoneme)
-
-        # Callback externe optionnel (ex: autre panneau)
-        if callable(self.on_pick):
-            try:
-                session_id = int(vals[0])
-            except Exception:
-                session_id = None
-            self.on_pick(session_id=session_id, child_id=child_id, phoneme=phoneme)
-
-    def _plot_evolution(self, child_id: int, phoneme: str | None):
-        # Récupère sessions enfant
-        rows = self.dl.fetch_sessions_filtered(child_id=child_id, limit=500)
-
-        pts = []
+        # Fetch from DB (source of truth)
+        try:
+            rows = self.dl.fetch_sessions_filtered(limit=1000)
+        except Exception:
+            return None
         for r in rows:
-            # r est une sqlite3.Row (accès par clé OK)
-            if phoneme and (r["phoneme_target"] or "") != phoneme:
-                continue
-
-            created = r["created_at"]
-            score = r["final_score"]
-            if created is None or score is None:
-                continue
-
-            created_norm = str(created).replace("T", " ")
             try:
-                dt = datetime.fromisoformat(created_norm)
+                if int(r["id"]) == session_id:
+                    return dict(r)
             except Exception:
-                try:
-                    dt = datetime.strptime(created_norm, "%Y-%m-%d %H:%M:%S")
-                except Exception:
-                    continue
+                continue
+        return None
 
-            pts.append((dt, float(score)))
-
-        pts.sort(key=lambda x: x[0])
-
-        self.ax.clear()
-
-        title = f"Enfant {child_id}"
-        if phoneme:
-            title += f" — phonème: {phoneme}"
-        self.ax.set_title(title)
-        self.ax.set_xlabel("Date")
-        self.ax.set_ylabel("Score final")
-
-        if not pts:
-            self.ax.text(0.5, 0.5, "Aucune donnée", ha="center", va="center", transform=self.ax.transAxes)
-            self.canvas.draw()
+    def _on_row_double_click(self, _event=None):
+        r = self._get_selected_row()
+        if not r:
             return
+        if self.on_pick:
+            try:
+                self.on_pick(int(r["id"]))
+            except Exception:
+                pass
+        # replay audio on double click as a convenience
+        self.replay_selected()
 
-        xs = [p[0] for p in pts]
-        ys = [p[1] for p in pts]
+    def _on_row_select(self, _event=None):
+        self._plot_evolution()
 
-        self.ax.plot(xs, ys, marker="o")
-        self.ax.grid(True, alpha=0.25)
-        self.fig.autofmt_xdate(rotation=30)
-
-        self.canvas.draw()
+    def _plot_evolution(self):
+        # Delegate to the host app if provided
+        if self.on_pick:
+            sel = self.tree.selection()
+            if sel:
+                try:
+                    sid = int(self.tree.set(sel[0], "id"))
+                    self.on_pick(sid)
+                except Exception:
+                    pass
