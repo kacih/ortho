@@ -4,4 +4,4 @@ Keep this file minimal. Other modules (config, __init__, manifest check) should
 import __version__ from here to avoid mismatch regressions.
 """
 
-__version__ = "7.15.1"
+__version__ = "7.16.0"

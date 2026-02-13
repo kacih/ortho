@@ -12,6 +12,7 @@ DEFAULT_SETTINGS = {
     "last_plan_json": "",
     "last_plan_name": "",
     "last_plan_mode": "",
+    "kiosk_mode": 0,
 }
 
 
@@ -39,7 +40,8 @@ class SettingsManager:
                     tts_backend TEXT,
                     last_plan_json TEXT,
                     last_plan_name TEXT,
-                    last_plan_mode TEXT
+                    last_plan_mode TEXT,
+                    kiosk_mode INTEGER DEFAULT 0
                 )
                 """
             )
@@ -55,13 +57,15 @@ class SettingsManager:
                     con.execute("ALTER TABLE user_settings ADD COLUMN last_plan_name TEXT")
                 if "last_plan_mode" not in cols:
                     con.execute("ALTER TABLE user_settings ADD COLUMN last_plan_mode TEXT")
+                if "kiosk_mode" not in cols:
+                    con.execute("ALTER TABLE user_settings ADD COLUMN kiosk_mode INTEGER DEFAULT 0")
             except Exception:
                 pass
 
             con.execute(
                 """INSERT OR IGNORE INTO user_settings
-                    (id, tts_voice, tts_rate, tts_volume, tts_backend, last_plan_json, last_plan_name, last_plan_mode)
-                    VALUES (1, ?, ?, ?, ?, ?, ?, ?)""",
+                    (id, tts_voice, tts_rate, tts_volume, tts_backend, last_plan_json, last_plan_name, last_plan_mode, kiosk_mode)
+                    VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     DEFAULT_SETTINGS["tts_voice"],
                     DEFAULT_SETTINGS["tts_rate"],
@@ -70,6 +74,7 @@ class SettingsManager:
                     DEFAULT_SETTINGS["last_plan_json"],
                     DEFAULT_SETTINGS["last_plan_name"],
                     DEFAULT_SETTINGS["last_plan_mode"],
+                    int(DEFAULT_SETTINGS["kiosk_mode"]),
                 ),
             )
             con.commit()
@@ -77,7 +82,7 @@ class SettingsManager:
     def load(self) -> Dict[str, Any]:
         with self._connect() as con:
             row = con.execute(
-                "SELECT tts_voice, tts_rate, tts_volume, tts_backend FROM user_settings WHERE id=1"
+                "SELECT tts_voice, tts_rate, tts_volume, tts_backend, last_plan_json, last_plan_name, last_plan_mode, kiosk_mode FROM user_settings WHERE id=1"
             ).fetchone()
 
         if not row:
@@ -88,6 +93,10 @@ class SettingsManager:
             "tts_rate": float(row["tts_rate"]) if row["tts_rate"] is not None else DEFAULT_SETTINGS["tts_rate"],
             "tts_volume": float(row["tts_volume"]) if row["tts_volume"] is not None else DEFAULT_SETTINGS["tts_volume"],
             "tts_backend": (row["tts_backend"] or DEFAULT_SETTINGS["tts_backend"]).strip() or DEFAULT_SETTINGS["tts_backend"],
+            "last_plan_json": row["last_plan_json"] or DEFAULT_SETTINGS["last_plan_json"],
+            "last_plan_name": row["last_plan_name"] or DEFAULT_SETTINGS["last_plan_name"],
+            "last_plan_mode": row["last_plan_mode"] or DEFAULT_SETTINGS["last_plan_mode"],
+            "kiosk_mode": int(row["kiosk_mode"]) if row["kiosk_mode"] is not None else int(DEFAULT_SETTINGS["kiosk_mode"]),
         }
 
     def save(self, s: Dict[str, Any]) -> None:
@@ -98,12 +107,13 @@ class SettingsManager:
         last_plan_json = s.get("last_plan_json", DEFAULT_SETTINGS["last_plan_json"]) or ""
         last_plan_name = s.get("last_plan_name", DEFAULT_SETTINGS["last_plan_name"]) or ""
         last_plan_mode = s.get("last_plan_mode", DEFAULT_SETTINGS["last_plan_mode"]) or ""
+        kiosk_mode = int(s.get("kiosk_mode", DEFAULT_SETTINGS["kiosk_mode"]) or 0)
 
         with self._connect() as con:
             con.execute(
                 """UPDATE user_settings
-                   SET tts_voice=?, tts_rate=?, tts_volume=?, tts_backend=?, last_plan_json=?, last_plan_name=?, last_plan_mode=?
+                   SET tts_voice=?, tts_rate=?, tts_volume=?, tts_backend=?, last_plan_json=?, last_plan_name=?, last_plan_mode=?, kiosk_mode=?
                    WHERE id=1""",
-                (voice, rate, volume, backend, last_plan_json, last_plan_name, last_plan_mode),
+                (voice, rate, volume, backend, last_plan_json, last_plan_name, last_plan_mode, kiosk_mode),
             )
             con.commit()

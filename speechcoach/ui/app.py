@@ -121,27 +121,39 @@ class SpeechCoachApp(tk.Tk):
 
     def _build_menu(self):
         menubar = tk.Menu(self)
+        # Keep references to menus so we can enable/disable them (kiosk mode).
+        self._menubar = menubar
 
         m_child = tk.Menu(menubar, tearoff=0)
         m_child.add_command(label="Gérer les enfants…", command=self.open_children)
         menubar.add_cascade(label="Enfants", menu=m_child)
+        self._menu_children = m_child
 
         m_audio = tk.Menu(menubar, tearoff=0)
         m_audio.add_command(label="Audio (micro/sortie)…", command=self.open_audio_devices)
         m_audio.add_command(label="Voix TTS…", command=self.open_tts_settings)
         m_audio.add_separator()
         menubar.add_cascade(label="Audio", menu=m_audio)
+        self._menu_audio = m_audio
 
         m_dash = tk.Menu(menubar, tearoff=0)
         m_dash.add_command(label="Dashboard Pro…", command=self.open_dashboard)
         menubar.add_cascade(label="TDB", menu=m_dash)
+        self._menu_dash = m_dash
 
         m_help = tk.Menu(menubar, tearoff=0)
         m_help.add_command(label="À propos", command=lambda: messagebox.showinfo("À propos", f"{APP_NAME}\n{APP_VERSION}"))
         menubar.add_cascade(label="Aide", menu=m_help)
+        self._menu_help = m_help
         self.config(menu=menubar)
 
     def _build_ui(self):
+        # Load persisted settings early (kiosk/last plan, etc.).
+        try:
+            self._app_settings = self.settings_mgr.load()
+        except Exception:
+            self._app_settings = {}
+
         root = ttk.Frame(self)
         root.pack(fill="both", expand=True)
 
@@ -160,7 +172,8 @@ class SpeechCoachApp(tk.Tk):
         ttk.Label(top, text="Enfant:").pack(side="left")
         self.lbl_child = ttk.Label(top, text="(non sélectionné)")
         self.lbl_child.pack(side="left", padx=8)
-        ttk.Button(top, text="Sélectionner…", command=self.open_children).pack(side="left", padx=6)
+        self.btn_select_child = ttk.Button(top, text="Sélectionner…", command=self.open_children)
+        self.btn_select_child.pack(side="left", padx=6)
 
         ttk.Separator(top, orient="vertical").pack(side="left", fill="y", padx=10)
 
@@ -182,6 +195,16 @@ class SpeechCoachApp(tk.Tk):
             command=self.on_toggle_teacher_mode
         )
         self.chk_teacher_mode.pack(side="left", padx=6)
+
+        # Sprint 5: mode kiosque (verrouillage UI pour l'école)
+        self.var_kiosk_mode = tk.BooleanVar(value=bool(self._app_settings.get("kiosk_mode", 0)))
+        self.chk_kiosk_mode = ttk.Checkbutton(
+            top,
+            text="Mode kiosque",
+            variable=self.var_kiosk_mode,
+            command=self.on_toggle_kiosk_mode,
+        )
+        self.chk_kiosk_mode.pack(side="left", padx=6)
 
         self.teacher_frame = ttk.Frame(top)
         # (packed only when enabled)
@@ -251,6 +274,12 @@ class SpeechCoachApp(tk.Tk):
 
         self.btn_stop = ttk.Button(top, text="⏹️ Stop", command=self.stop_game, state="disabled")
         self.btn_stop.pack(side="left", padx=6)
+
+        # Apply persisted kiosk mode after building widgets.
+        try:
+            self.apply_kiosk_mode()
+        except Exception:
+            pass
 
         mid = ttk.Frame(root)
         mid.pack(fill="x", padx=12, pady=8)
@@ -512,6 +541,68 @@ class SpeechCoachApp(tk.Tk):
         else:
             try:
                 self.teacher_frame.pack_forget()
+            except Exception:
+                pass
+
+    # ---- Sprint 5: mode kiosque (verrouillage UI)
+    def on_toggle_kiosk_mode(self):
+        """Enable/disable kiosk mode and persist it."""
+        enabled = bool(self.var_kiosk_mode.get()) if getattr(self, 'var_kiosk_mode', None) is not None else False
+        # Persist
+        try:
+            s = self.settings_mgr.load()
+            s["kiosk_mode"] = 1 if enabled else 0
+            self.settings_mgr.save(s)
+        except Exception:
+            pass
+        self.apply_kiosk_mode()
+
+    def apply_kiosk_mode(self):
+        enabled = bool(self.var_kiosk_mode.get()) if getattr(self, 'var_kiosk_mode', None) is not None else False
+
+        # Disable menus that allow configuration changes.
+        try:
+            if hasattr(self, "_menubar") and self._menubar is not None:
+                for label in ("Enfants", "Audio", "TDB"):
+                    try:
+                        self._menubar.entryconfig(label, state=("disabled" if enabled else "normal"))
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Disable buttons that open configuration dialogs.
+        try:
+            if hasattr(self, "btn_select_child") and self.btn_select_child is not None:
+                self.btn_select_child.config(state=("disabled" if enabled else "normal"))
+        except Exception:
+            pass
+
+        try:
+            # In kiosk mode, we generally don't want presets to be modified on the fly.
+            if hasattr(self, "btn_save_plan") and self.btn_save_plan is not None:
+                self.btn_save_plan.config(state=("disabled" if enabled else "normal"))
+        except Exception:
+            pass
+
+        # Guide the user toward a safe operational state.
+        if enabled:
+            try:
+                # Prefer teacher mode for quick chaining; keep child auto-mode off.
+                self.var_child_mode.set(False)
+                if hasattr(self, "var_teacher_mode"):
+                    self.var_teacher_mode.set(True)
+                    self.on_toggle_teacher_mode()
+                self.on_toggle_mode()
+            except Exception:
+                pass
+            try:
+                self.set_status("🔒 Mode kiosque activé : menus de configuration verrouillés")
+            except Exception:
+                pass
+        else:
+            try:
+                self.set_status("Mode kiosque désactivé")
             except Exception:
                 pass
 
