@@ -274,7 +274,10 @@ class DataLayer:
         self.db_path = db_path
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
-        self.lock = threading.Lock()
+        # Re-entrant lock: some public methods call other methods that also
+        # take the DB lock (e.g. get_child_session_summary -> get_child_progress
+        # -> ensure_child_progress). A plain Lock would deadlock.
+        self.lock = threading.RLock()
         migrate_db(self.conn)
     def get_audio_path_by_session_id(self, session_id: int) -> str | None:
         with self.lock:
@@ -479,6 +482,218 @@ class DataLayer:
                     (limit,)
                 )
             return [r[0] for r in cur.fetchall() if r[0] is not None]
+
+
+    # --- Sprint 6: progress dashboard helpers ---------------------------------
+    def get_child_session_summary(self, child_id: int) -> Dict[str, Any]:
+        """Return a quick, human-facing summary for the progress dashboard."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """SELECT
+                       COUNT(*) AS n,
+                       COALESCE(SUM(duration_sec), 0.0) AS total_dur,
+                       COALESCE(AVG(final_score), 0.0) AS avg_score
+                   FROM sessions
+                   WHERE child_id=? AND final_score IS NOT NULL""",
+                (int(child_id),)
+            )
+            r = cur.fetchone()
+            n = int(r["n"] or 0) if r else 0
+            total_dur = float(r["total_dur"] or 0.0) if r else 0.0
+            avg_score = float(r["avg_score"] or 0.0) if r else 0.0
+
+            # Use child_progress for streak/level/xp (best effort)
+            p = self.get_child_progress(child_id)
+            out: Dict[str, Any] = {
+                "total_sessions": n,
+                "total_duration_sec": total_dur,
+                "avg_score": avg_score,
+                "xp": int(p["xp"] or 0) if p else 0,
+                "level": int(p["level"] or 1) if p else 1,
+                "streak": int(p["streak"] or 0) if p else 0,
+                "last_play_date": (p["last_play_date"] if p else None),
+            }
+            return out
+
+    def get_child_recent_scores(self, child_id: int, limit: int = 20) -> List[tuple]:
+        """Return list of (created_at, final_score) for the last N sessions."""
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """SELECT created_at, final_score FROM sessions
+                     WHERE child_id=? AND final_score IS NOT NULL
+                     ORDER BY datetime(REPLACE(created_at,'T',' ')) DESC
+                     LIMIT ?""",
+                (int(child_id), int(limit)),
+            )
+            rows = cur.fetchall()
+            # Return chronological order for plotting
+            out = [(r[0], float(r[1])) for r in rows if r[0] and r[1] is not None]
+            out.reverse()
+            return out
+
+    def get_phoneme_insights(self, child_id: int, min_count: int = 3) -> Dict[str, Any]:
+        """Compute simple 'weakest' and 'improving' phoneme insights.
+
+        - Weakest: lowest avg score across all time (min_count sessions)
+        - Improving: compare last 10 vs previous 10 for the same phoneme
+        """
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """SELECT phoneme_target AS p,
+                          COUNT(*) AS n,
+                          AVG(final_score) AS avg
+                   FROM sessions
+                   WHERE child_id=? AND final_score IS NOT NULL
+                     AND COALESCE(phoneme_target,'') <> ''
+                   GROUP BY phoneme_target
+                   HAVING COUNT(*) >= ?
+                   ORDER BY avg ASC""",
+                (int(child_id), int(min_count)),
+            )
+            agg = [(str(r["p"]), int(r["n"]), float(r["avg"] or 0.0)) for r in cur.fetchall()]
+
+            weakest = agg[:3]
+
+            # Improving: per phoneme, fetch last 20 scores and compare windows
+            improving: List[tuple] = []  # (p, delta, recent_avg, prev_avg, n)
+            for p, n, _avg in agg:
+                cur.execute(
+                    """SELECT final_score FROM sessions
+                         WHERE child_id=? AND phoneme_target=? AND final_score IS NOT NULL
+                         ORDER BY datetime(REPLACE(created_at,'T',' ')) DESC
+                         LIMIT 20""",
+                    (int(child_id), p),
+                )
+                vals = [float(x[0]) for x in cur.fetchall() if x[0] is not None]
+                if len(vals) < 10:
+                    continue
+                recent = vals[:10]
+                prev = vals[10:20] if len(vals) >= 20 else vals[10:]
+                if len(prev) < 5:
+                    continue
+                recent_avg = sum(recent) / len(recent)
+                prev_avg = sum(prev) / len(prev)
+                delta = recent_avg - prev_avg
+                improving.append((p, delta, recent_avg, prev_avg, n))
+
+            improving.sort(key=lambda x: x[1], reverse=True)
+            improving = [t for t in improving if t[1] > 0.01][:3]
+
+            return {
+                "weakest": weakest,
+                "improving": improving,
+            }
+
+    def export_child_sessions_csv(self, child_id: int, out_path: str, limit: int = 500) -> str:
+        """Export latest sessions for a child as CSV. Returns written path."""
+        import csv
+        os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
+
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """SELECT created_at, duration_sec, final_score, phoneme_target,
+                          plan_name, story_title, expected_text, recognized_text
+                   FROM sessions
+                   WHERE child_id=?
+                   ORDER BY datetime(REPLACE(created_at,'T',' ')) DESC
+                   LIMIT ?""",
+                (int(child_id), int(limit)),
+            )
+            rows = cur.fetchall()
+
+        # Write in chronological order
+        rows = list(reversed(rows))
+
+        with open(out_path, "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f, delimiter=";")
+            w.writerow([
+                "date",
+                "duration_sec",
+                "final_score",
+                "phoneme_target",
+                "plan",
+                "story_title",
+                "expected_text",
+                "recognized_text",
+            ])
+            for r in rows:
+                w.writerow([
+                    r[0] or "",
+                    ("{:.2f}".format(float(r[1] or 0.0))),
+                    ("{:.3f}".format(float(r[2] or 0.0))) if r[2] is not None else "",
+                    r[3] or "",
+                    r[4] or "",
+                    r[5] or "",
+                    (r[6] or "").replace("\n", " ").strip(),
+                    (r[7] or "").replace("\n", " ").strip(),
+                ])
+        return out_path
+
+
+    def get_class_overview(self, limit_per_child: int = 20) -> List[Dict[str, Any]]:
+        """Return per-child overview for a class/group screen.
+
+        Trend is computed from the last up to 20 sessions:
+        - recent_avg = avg(last 10)
+        - prev_avg   = avg(previous 10)
+        - delta      = recent_avg - prev_avg
+        Status:
+          ▲ if delta >= +0.05
+          ▼ if delta <= -0.05
+          ■ otherwise
+        """
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT id, name, age, grade FROM children ORDER BY name COLLATE NOCASE")
+            children = cur.fetchall()
+
+            out: List[Dict[str, Any]] = []
+            for c in children:
+                child_id = int(c["id"])
+                cur.execute(
+                    """SELECT final_score, duration_sec, created_at
+                       FROM sessions
+                       WHERE child_id=? AND final_score IS NOT NULL
+                       ORDER BY datetime(REPLACE(created_at,'T',' ')) DESC
+                       LIMIT ?""",
+                    (child_id, int(limit_per_child)),
+                )
+                rows = cur.fetchall()
+                scores = [float(r[0]) for r in rows if r[0] is not None]
+                total_sessions = len(scores)
+                avg = (sum(scores) / total_sessions) if total_sessions else None
+
+                recent = scores[:10]
+                prev = scores[10:20]
+                recent_avg = (sum(recent) / len(recent)) if len(recent) >= 3 else None
+                prev_avg = (sum(prev) / len(prev)) if len(prev) >= 3 else None
+                delta = (recent_avg - prev_avg) if (recent_avg is not None and prev_avg is not None) else None
+
+                status = "■"
+                if delta is not None:
+                    if delta >= 0.05:
+                        status = "▲"
+                    elif delta <= -0.05:
+                        status = "▼"
+
+                out.append({
+                    "child_id": child_id,
+                    "name": c["name"],
+                    "age": c["age"],
+                    "grade": c["grade"],
+                    "sessions": total_sessions,
+                    "avg_score": avg,
+                    "recent_avg": recent_avg,
+                    "prev_avg": prev_avg,
+                    "delta": delta,
+                    "status": status,
+                })
+
+        return out
 
 
     def add_child(self, name: str, age: Optional[int], sex: str, grade: str, avatar_bytes: Optional[bytes]=None) -> int:
