@@ -161,7 +161,7 @@ class GameController:
         idxs_sorted = sorted(idxs, key=lambda j: len((story.sentences[j].text or "")))
 
         if plan is None:
-            # default behavior close to v7.15.0
+            # default behavior close to v7.15.1
             return [i % n_sent for i in range(rounds)]
 
         try:
