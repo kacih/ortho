@@ -122,3 +122,22 @@ def build_session_plan(child: Optional[Dict[str, Any]], duration_min: int = 3) -
         repeat_on_fail=True,
         max_repeats_per_sentence=1,
     )
+
+
+def plan_from_json_dict(d: Dict[str, Any]) -> SessionPlan:
+    """Build a SessionPlan from a persisted JSON dict (DB/user preset)."""
+    d = dict(d or {})
+    allowed = {f.name for f in SessionPlan.__dataclass_fields__.values()}
+    clean = {k: d.get(k) for k in allowed if k in d}
+    # Defensive typing
+    try:
+        if "duration_min" in clean and clean["duration_min"] is not None:
+            clean["duration_min"] = int(clean["duration_min"])
+    except Exception:
+        pass
+    try:
+        if "rounds" in clean and clean["rounds"] is not None:
+            clean["rounds"] = int(clean["rounds"])
+    except Exception:
+        pass
+    return SessionPlan(**clean)

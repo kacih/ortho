@@ -212,6 +212,24 @@ class GameController:
             # Minimal adaptation counters (repeat-on-fail)
             repeats = {}
 
+            # Sprint 2: session-run summary
+            run_id = None
+            try:
+                if plan is not None and self.child_id is not None:
+                    run_id = self.dl.create_session_run(
+                        child_id=int(self.child_id),
+                        plan=getattr(plan, "to_json_dict", lambda: {})(),
+                        planned_items=int(total),
+                    )
+            except Exception:
+                run_id = None
+
+            # Sprint 2: fatigue detection (very simple heuristics)
+            recent_scores = []
+            recent_durations = []
+            ended_early = False
+            completed_items = 0
+
             for i, sent_idx in enumerate(seq):
 
                 if self._stop_event.is_set():
@@ -358,6 +376,82 @@ class GameController:
                     "focus_end_sec": fe,
                 })
 
+                completed_items += 1
+                try:
+                    recent_scores.append(float(final))
+                    recent_durations.append(float(dur))
+                    if len(recent_scores) > 4:
+                        recent_scores = recent_scores[-4:]
+                    if len(recent_durations) > 4:
+                        recent_durations = recent_durations[-4:]
+                except Exception:
+                    pass
+
+                # Sprint 2: detect fatigue -> finish with short cooldown and stop early
+                try:
+                    if plan is not None and not ended_early and len(recent_scores) >= 4:
+                        first2 = (recent_scores[0] + recent_scores[1]) / 2.0
+                        last2 = (recent_scores[2] + recent_scores[3]) / 2.0
+                        d_first2 = (recent_durations[0] + recent_durations[1]) / 2.0
+                        d_last2 = (recent_durations[2] + recent_durations[3]) / 2.0
+                        failures = sum(1 for s in recent_scores if s < 0.45)
+
+                        if (failures >= 3) or ((last2 < first2 - 0.15) and (d_last2 > d_first2 * 1.2)):
+                            ended_early = True
+                            self.last_end_reason = "fatigue"
+                            self._status("😮‍💨 On ralentit et on termine tranquillement…")
+
+                            # Run a short cooldown (easiest sentences)
+                            n_sent = len(getattr(story, "sentences", []) or [])
+                            if n_sent > 0:
+                                idxs = list(range(n_sent))
+                                idxs_sorted = sorted(idxs, key=lambda j: len((story.sentences[j].text or "")))
+                                cool_seq = [idxs_sorted[k % n_sent] for k in range(min(3, n_sent))]
+
+                                for _cs in cool_seq:
+                                    if self._stop_event.is_set():
+                                        break
+                                    sent2 = story.sentences[_cs % n_sent]
+                                    self._status(f"✅ Dernière phrase : {sent2.text}")
+                                    wav2 = self.audio.record_and_playback(sent2.text)
+                                    rec2, w2, dur2 = self.asr.recognize_wav(wav2, expected_text=sent2.text)
+                                    # We store it as a regular session row as well
+                                    try:
+                                        self.dl.save_session({
+                                            "created_at": now_iso(),
+                                            "child_id": self.child_id,
+                                            "story_id": story.story_id,
+                                            "story_title": story.title,
+                                            "goal": story.goal,
+                                            "plan_id": getattr(plan, "plan_id", None),
+                                            "plan_name": getattr(plan, "name", None),
+                                            "plan_mode": getattr(plan, "mode", None),
+                                            "plan_json": json.dumps(getattr(plan, "to_json_dict", lambda: {})(), ensure_ascii=False) if plan else None,
+                                            "sentence_index": i,
+                                            "expected_text": sent2.text,
+                                            "recognized_text": rec2 or "",
+                                            "wer": w2,
+                                            "audio_path": wav2,
+                                            "duration_sec": dur2,
+                                            "phoneme_target": getattr(sent2, "phoneme_target", "") or "",
+                                            "spectral_centroid_hz": None,
+                                            "phoneme_quality": None,
+                                            "features_json": None,
+                                            "acoustic_score": None,
+                                            "acoustic_contrast": None,
+                                            "final_score": None,
+                                            "phoneme_confidence": None,
+                                            "focus_start_sec": None,
+                                            "focus_end_sec": None,
+                                        })
+                                        completed_items += 1
+                                    except Exception:
+                                        pass
+                            break
+                except Exception:
+                    pass
+
+
                 # UI analysis
                 self._dispatch(lambda: self.on_analysis({
                     "wer": w,
@@ -385,6 +479,11 @@ class GameController:
             self._status(f"❌ Erreur: {e}")
 
         finally:
+            try:
+                if run_id is not None:
+                    self.dl.finish_session_run(run_id, completed_items=int(locals().get('completed_items', 0) or 0), ended_early=bool(locals().get('ended_early', False)), reason=str(self.last_end_reason or ''))
+            except Exception:
+                pass
             self.state = GameState.IDLE
         self._paused_prev_state = GameState.PLAYING
         if self.on_end:

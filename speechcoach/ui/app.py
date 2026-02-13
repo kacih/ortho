@@ -1,7 +1,8 @@
 import tkinter as tk
 from speechcoach.game import GameState
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 import threading
+import json
 
 from speechcoach.config import (
     APP_NAME, APP_VERSION,
@@ -11,6 +12,7 @@ from speechcoach.config import (
 )
 from speechcoach.utils_paths import ensure_dir, pick_existing
 from speechcoach.db import DataLayer
+from speechcoach.settings import SettingsManager
 from speechcoach.stories import StoryEngine
 from speechcoach.audio import AudioEngine
 from speechcoach.asr import ASREngine
@@ -38,6 +40,9 @@ class SpeechCoachApp(tk.Tk):
         stories_path = pick_existing(DEFAULT_STORIES_PATH, FALLBACK_STORIES_PATH)
 
         self.dl = DataLayer(db_path)
+        self.settings_mgr = SettingsManager(db_path)
+        self._plan_key_to_plan = {}
+
         self.stories = StoryEngine(stories_path)
         n = self.stories.load()
 
@@ -168,18 +173,25 @@ class SpeechCoachApp(tk.Tk):
         )
         self.chk_child_mode.pack(side="left", padx=6)
 
-        # Sprint 1: plan presets (adult mode)
+        # Sprint 1/2: plan presets + user presets (adult mode)
         ttk.Label(top, text="Plan:").pack(side="left")
         self.var_plan_id = tk.StringVar(value="standard")
         self.cmb_plan = ttk.Combobox(
             top,
             textvariable=self.var_plan_id,
             state="readonly",
-            width=12,
-            values=["libre","decouverte","standard","intensif"]
+            width=20,
+            values=[]
         )
         self.cmb_plan.pack(side="left", padx=6)
         self.cmb_plan.bind("<<ComboboxSelected>>", lambda e: self.on_plan_change())
+
+        self.btn_save_plan = ttk.Button(top, text="💾 Enregistrer", command=self.save_current_plan_preset)
+        self.btn_save_plan.pack(side="left", padx=4)
+        self.btn_resume_plan = ttk.Button(top, text="↩️ Reprendre", command=self.resume_last_plan)
+        self.btn_resume_plan.pack(side="left", padx=4)
+
+        self.refresh_plans()
 
         ttk.Label(top, text="Durée (min):").pack(side="left")
         self.var_minutes = tk.IntVar(value=3)
@@ -259,27 +271,150 @@ class SpeechCoachApp(tk.Tk):
 
     
     def on_plan_change(self):
-        """Apply preset plan values to duration/rounds (Sprint 1)."""
+        """Apply plan values to duration/rounds (Sprint 1/2)."""
         try:
             # Do not interfere with child mode
             if getattr(self, "var_child_mode", None) is not None and self.var_child_mode.get():
                 return
-            pid = (self.var_plan_id.get() or "libre").strip().lower()
-            if pid in ("decouverte","standard","intensif"):
-                plan = get_preset_plan(pid)
-                try:
-                    self.var_minutes.set(int(plan.duration_min))
-                except Exception:
-                    pass
-                try:
-                    self.var_rounds.set(int(plan.rounds))
-                except Exception:
-                    pass
-            else:
-                # Libre: keep current rounds
+
+            key = (self.var_plan_id.get() or "libre").strip()
+            plan = None
+            try:
+                plan = self._plan_key_to_plan.get(key)
+            except Exception:
+                plan = None
+
+            if plan is None:
+                # Libre: keep current rounds/duration
+                return
+
+            try:
+                self.var_minutes.set(int(getattr(plan, "duration_min", self.var_minutes.get())))
+            except Exception:
+                pass
+            try:
+                self.var_rounds.set(int(getattr(plan, "rounds", self.var_rounds.get())))
+            except Exception:
                 pass
         except Exception:
             pass
+
+
+    
+    def refresh_plans(self):
+        """Populate combobox with builtin presets + user presets from DB (Sprint 2)."""
+        try:
+            self._plan_key_to_plan = {}
+            values = []
+
+            # Builtins
+            values.append("libre")
+            self._plan_key_to_plan["libre"] = None
+            for p in preset_plans():
+                key = p.plan_id
+                values.append(key)
+                self._plan_key_to_plan[key] = p
+
+            # User presets
+            try:
+                rows = self.dl.list_session_plans()
+            except Exception:
+                rows = []
+            for r in rows:
+                try:
+                    pid = int(r["id"])
+                    name = str(r["name"] or "").strip() or f"Plan {pid}"
+                    key = f"user:{pid}:{name}"
+                    d = json.loads(r["plan_json"]) if r["plan_json"] else {}
+                    plan = plan_from_json_dict(d)
+                    values.append(key)
+                    self._plan_key_to_plan[key] = plan
+                except Exception:
+                    continue
+
+            self.cmb_plan["values"] = values
+
+            # Restore last plan if available
+            try:
+                s = self.settings_mgr.load()
+                last_json = (s.get("last_plan_json") or "").strip()
+                last_name = (s.get("last_plan_name") or "").strip()
+                last_mode = (s.get("last_plan_mode") or "").strip()
+                if last_json:
+                    try:
+                        d = json.loads(last_json)
+                        plan = plan_from_json_dict(d)
+                        key = f"last:{last_mode}:{last_name}".strip(":")
+                        # put at top after libre
+                        if key not in values:
+                            values.insert(1, key)
+                            self.cmb_plan["values"] = values
+                            self._plan_key_to_plan[key] = plan
+                        self.var_plan_id.set(key)
+                        self.on_plan_change()
+                        return
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+            # default selection
+            if not self.var_plan_id.get():
+                self.var_plan_id.set("standard")
+            self.on_plan_change()
+        except Exception:
+            pass
+
+    def _current_selected_plan(self):
+        key = (self.var_plan_id.get() or "libre").strip()
+        try:
+            return self._plan_key_to_plan.get(key)
+        except Exception:
+            return None
+
+    def save_current_plan_preset(self):
+        """Save currently selected plan as a user preset (Sprint 2)."""
+        try:
+            if getattr(self, "var_child_mode", None) is not None and self.var_child_mode.get():
+                messagebox.showinfo("Plan", "Le mode enfant n'enregistre pas de plan.")
+                return
+
+            plan = self._current_selected_plan()
+            if plan is None:
+                # create a minimal plan from current UI values
+                from speechcoach.session_manager import SessionPlan
+                plan = SessionPlan(plan_id="custom", name="Custom", mode="libre",
+                                   duration_min=int(self.var_minutes.get()),
+                                   rounds=int(self.var_rounds.get()))
+
+            name = simpledialog.askstring("Enregistrer un plan", "Nom du plan :", parent=self.root)
+            if not name:
+                return
+
+            pid = self.dl.save_session_plan(name=name, plan=plan.to_json_dict())
+            messagebox.showinfo("Plan", f"Plan enregistré (id={pid}).")
+            self.refresh_plans()
+        except Exception as e:
+            messagebox.showerror("Erreur", str(e))
+
+    def resume_last_plan(self):
+        """Start a session with the last used plan (Sprint 2)."""
+        try:
+            s = self.settings_mgr.load()
+            last_json = (s.get("last_plan_json") or "").strip()
+            if not last_json:
+                messagebox.showinfo("Reprendre", "Aucun plan précédent n'a été enregistré.")
+                return
+            d = json.loads(last_json)
+            plan = plan_from_json_dict(d)
+            # reflect in UI
+            self.var_minutes.set(int(getattr(plan, "duration_min", self.var_minutes.get())))
+            self.var_rounds.set(int(getattr(plan, "rounds", self.var_rounds.get())))
+            self.set_status(f"↩️ Reprise : {getattr(plan, 'name', 'Plan')} ({plan.rounds} tours)")
+            # start
+            return self._start_with_rounds(int(plan.rounds), plan=plan)
+        except Exception as e:
+            messagebox.showerror("Erreur", str(e))
 
     def on_duration_change(self):
         """Recompute auto rounds when duration changes."""
@@ -381,13 +516,30 @@ class SpeechCoachApp(tk.Tk):
             return self.start_session_auto(duration_min=3)
 
         try:
-            pid = (getattr(self, "var_plan_id", None) and self.var_plan_id.get()) or "libre"
-            pid = str(pid).strip().lower()
-            plan = get_preset_plan(pid) if pid in ("decouverte","standard","intensif") else None
+            key = (getattr(self, "var_plan_id", None) and self.var_plan_id.get()) or "libre"
+            key = str(key).strip()
+            plan = None
+            try:
+                plan = self._plan_key_to_plan.get(key)
+            except Exception:
+                plan = None
+
+            # Persist last plan for "Reprendre"
+            try:
+                s = self.settings_mgr.load()
+                if plan is not None:
+                    s["last_plan_json"] = json.dumps(plan.to_json_dict(), ensure_ascii=False)
+                    s["last_plan_name"] = getattr(plan, "name", "") or ""
+                    s["last_plan_mode"] = getattr(plan, "mode", "") or ""
+                self.settings_mgr.save(s)
+            except Exception:
+                pass
+
             self._start_with_rounds(int(self.var_rounds.get()), plan=plan)
         except Exception as e:
             self.on_end()
             messagebox.showerror("Erreur", str(e))
+
 
     def stop_game(self):
         self.game.stop()
