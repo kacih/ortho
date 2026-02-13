@@ -1,0 +1,72 @@
+[
+  {
+    "id": "pikachu",
+    "name": "Pikachu",
+    "rarity": "common",
+    "min_level": 1,
+    "icon": "pikachu.png"
+  },
+  {
+    "id": "evoli",
+    "name": "Évoli",
+    "rarity": "common",
+    "min_level": 1,
+    "icon": "evoli.png"
+  },
+  {
+    "id": "salameche",
+    "name": "Salamèche",
+    "rarity": "common",
+    "min_level": 1,
+    "icon": "salameche.png"
+  },
+  {
+    "id": "carapuce",
+    "name": "Carapuce",
+    "rarity": "common",
+    "min_level": 1,
+    "icon": "carapuce.png"
+  },
+  {
+    "id": "bulbizarre",
+    "name": "Bulbizarre",
+    "rarity": "common",
+    "min_level": 2,
+    "icon": "bulbizarre.png"
+  },
+  {
+    "id": "rondoudou",
+    "name": "Rondoudou",
+    "rarity": "common",
+    "min_level": 2,
+    "icon": "rondoudou.png"
+  },
+  {
+    "id": "lucario",
+    "name": "Lucario",
+    "rarity": "rare",
+    "min_level": 4,
+    "icon": "lucario.png"
+  },
+  {
+    "id": "dracolosse",
+    "name": "Dracolosse",
+    "rarity": "rare",
+    "min_level": 5,
+    "icon": "dracolosse.png"
+  },
+  {
+    "id": "gardevoir",
+    "name": "Gardevoir",
+    "rarity": "rare",
+    "min_level": 6,
+    "icon": "gardevoir.png"
+  },
+  {
+    "id": "mewtwo",
+    "name": "Mewtwo",
+    "rarity": "legendary",
+    "min_level": 8,
+    "icon": "mewtwo.png"
+  }
+]

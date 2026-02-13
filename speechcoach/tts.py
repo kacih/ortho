@@ -76,6 +76,56 @@ def list_voices() -> List[str]:
         return []
 
 
+
+def _play_wav_powershell(path: str) -> None:
+    if platform.system().lower() != "windows":
+        return
+    if not path:
+        return
+    ps = f"""
+    try {{
+      Add-Type -AssemblyName System.Windows.Forms | Out-Null
+      $p = '{path}'.Replace('\\','/')
+      $sp = New-Object System.Media.SoundPlayer($p)
+      $sp.PlaySync()
+    }} catch {{}}
+    """
+    try:
+        _ps_run(ps)
+    except Exception:
+        pass
+
+
+def _speak_edge_tts_to_wav(text: str, voice: str, out_path: str) -> bool:
+    """Best-effort Edge Neural TTS. Returns True on success.
+    Non-blocking guarantee is handled by the caller (fallback if False).
+    """
+    try:
+        import asyncio
+        import edge_tts  # type: ignore
+    except Exception:
+        return False
+
+    text = (text or "").strip()
+    if not text:
+        return False
+
+    async def _run():
+        communicate = edge_tts.Communicate(
+            text,
+            voice=voice or "fr-FR-DeniseNeural",
+            rate="+0%",
+            volume="+0%",
+        )
+        # Produce WAV (riff) so SoundPlayer can play it directly
+        await communicate.save(out_path, output_format="riff-24khz-16bit-mono-pcm")
+
+    try:
+        asyncio.run(_run())
+        return os.path.exists(out_path)
+    except Exception:
+        return False
+
 def speak(text: str, settings: Optional[Dict[str, Any]] = None, async_: bool = True) -> None:
     """
     Convenience function for UI usage.
@@ -166,6 +216,8 @@ class TTSEngine:
         self.voice: Optional[str] = None
         self.volume = 100               # 0..100 for PowerShell path
         self.use_pyttsx3 = False
+        self.backend = "system"  # system | edge
+        self.edge_voice = "fr-FR-DeniseNeural"
         self._lock = threading.Lock()
         self._is_windows = platform.system().lower() == "windows"
         self._pytts = None
@@ -236,6 +288,20 @@ class TTSEngine:
         # PowerShell path uses SpeechSynthesizer.Rate (-10..10). We'll map gently around 0.
         rate_ps = int(prof.get("rate_ps", 0))
         vol = int(prof.get("volume", self.volume))
+
+        if (getattr(self, "backend", "system") or "system") == "edge":
+            try:
+                from pathlib import Path
+                from .config import AUDIO_DIR
+                Path(AUDIO_DIR).mkdir(parents=True, exist_ok=True)
+                out_path = str(Path(AUDIO_DIR) / "edge_tts_tmp.wav")
+                ok = _speak_edge_tts_to_wav(' ' + text, getattr(self, "edge_voice", "fr-FR-DeniseNeural"), out_path)
+                if ok:
+                    _play_wav_powershell(out_path)
+                    return
+            except Exception:
+                pass
+
         # We keep the configured voice if any; voice choice is user/system dependent.
         if self._is_windows:
             with self._lock:
@@ -257,6 +323,8 @@ class TTSEngine:
         """
         if not settings:
             return
+        if "tts_backend" in settings:
+            self.backend = (settings.get("tts_backend") or "system").strip()
         if "tts_voice" in settings:
             self.set_voice(settings.get("tts_voice") or None)
         if "tts_volume" in settings:
@@ -271,6 +339,21 @@ class TTSEngine:
         text = (text or "").strip()
         if not text:
             return
+        # Optional Edge Neural TTS (must never be blocking): fallback to system voice on any failure.
+        if (getattr(self, "backend", "system") or "system") == "edge":
+            try:
+                import os
+                from pathlib import Path
+                from .config import AUDIO_DIR
+                Path(AUDIO_DIR).mkdir(parents=True, exist_ok=True)
+                out_path = str(Path(AUDIO_DIR) / "edge_tts_tmp.wav")
+                ok = _speak_edge_tts_to_wav(text, getattr(self, "edge_voice", "fr-FR-DeniseNeural"), out_path)
+                if ok:
+                    _play_wav_powershell(out_path)
+                    return
+            except Exception:
+                pass
+
 
         # articulation
         text = text.replace(".", ". ").replace(",", ", ").replace(";", "; ")

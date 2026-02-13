@@ -71,6 +71,39 @@ CREATE TABLE IF NOT EXISTS child_cards(
 
 CREATE INDEX IF NOT EXISTS idx_child_cards_child
 ON child_cards(child_id);
+
+-- Rewards v2 (catalog + progress) ------------------------------------------
+CREATE TABLE IF NOT EXISTS cards_catalog(
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  icon_path TEXT,
+  rarity TEXT,
+  min_level INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS child_progress(
+  child_id INTEGER PRIMARY KEY,
+  xp INTEGER DEFAULT 0,
+  level INTEGER DEFAULT 1,
+  total_sessions INTEGER DEFAULT 0,
+  last_play_date TEXT,
+  streak INTEGER DEFAULT 0,
+  FOREIGN KEY(child_id) REFERENCES children(id)
+);
+
+CREATE TABLE IF NOT EXISTS child_cards_v2(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  child_id INTEGER NOT NULL,
+  card_id TEXT NOT NULL,
+  obtained_at TEXT,
+  UNIQUE(child_id, card_id),
+  FOREIGN KEY(child_id) REFERENCES children(id),
+  FOREIGN KEY(card_id) REFERENCES cards_catalog(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_child_cards_v2_child
+ON child_cards_v2(child_id);
+
 """
 
 def _column_exists(cur: sqlite3.Cursor, table: str, col: str) -> bool:
@@ -80,6 +113,59 @@ def _column_exists(cur: sqlite3.Cursor, table: str, col: str) -> bool:
 def migrate_db(conn: sqlite3.Connection) -> None:
     cur = conn.cursor()
     cur.executescript(DDL)
+
+    # ---- Seed cards_catalog if empty (best-effort)
+    try:
+        cur.execute("SELECT COUNT(*) FROM cards_catalog")
+        n = int(cur.fetchone()[0] or 0)
+        if n == 0:
+            # load local catalog.json if present
+            try:
+                from pathlib import Path
+                import json as _json
+                from .config import RESOURCES_DIR
+                cat_path = Path(RESOURCES_DIR) / "cards" / "catalog.json"
+                if cat_path.exists():
+                    data = _json.loads(cat_path.read_text(encoding="utf-8"))
+                    for r in data:
+                        cur.execute(
+                            "INSERT OR IGNORE INTO cards_catalog(id,name,icon_path,rarity,min_level) VALUES(?,?,?,?,?)",
+                            (str(r.get("id")), str(r.get("name")), str(r.get("icon")), str(r.get("rarity","common")), int(r.get("min_level",1)))
+                        )
+                    conn.commit()
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # ---- Migrate old child_cards (v1 names) into v2 when possible
+    try:
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='child_cards'")
+        if cur.fetchone():
+            cur.execute("SELECT child_id, card_name, obtained_at FROM child_cards")
+            rows = cur.fetchall()
+            # map name->id from catalog
+            cur.execute("SELECT id, name FROM cards_catalog")
+            name_map = {r[1]: r[0] for r in cur.fetchall()}
+            for r in rows:
+                cid = int(r[0])
+                nm = str(r[1])
+                dt = r[2]
+                card_id = name_map.get(nm)
+                if not card_id:
+                    # create a minimal catalog entry for unknown names
+                    card_id = nm.lower().replace(" ", "_")
+                    cur.execute(
+                        "INSERT OR IGNORE INTO cards_catalog(id,name,icon_path,rarity,min_level) VALUES(?,?,?,?,?)",
+                        (card_id, nm, "", "common", 1)
+                    )
+                cur.execute(
+                    "INSERT OR IGNORE INTO child_cards_v2(child_id, card_id, obtained_at) VALUES(?,?,?)",
+                    (cid, card_id, dt or now_iso())
+                )
+            conn.commit()
+    except Exception:
+        pass
 
     add_cols = [
         # Children schema upgrades (older DBs might miss these)
@@ -193,6 +279,127 @@ class DataLayer:
 
 
 
+
+    # --- rewards / collections v2
+    def ensure_child_progress(self, child_id: int) -> None:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("INSERT OR IGNORE INTO child_progress(child_id) VALUES(?)", (int(child_id),))
+            self.conn.commit()
+
+    def get_child_progress(self, child_id: int) -> Optional[sqlite3.Row]:
+        self.ensure_child_progress(child_id)
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT * FROM child_progress WHERE child_id=?", (int(child_id),))
+            return cur.fetchone()
+
+    def list_child_cards_v2(self, child_id: int) -> List[sqlite3.Row]:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                """SELECT cc.id as card_id, cc.name, cc.icon_path, cc.rarity, cc.min_level, c2.obtained_at
+                   FROM child_cards_v2 c2
+                   JOIN cards_catalog cc ON cc.id = c2.card_id
+                   WHERE c2.child_id=?
+                   ORDER BY datetime(REPLACE(c2.obtained_at,'T',' ')) DESC""",
+                (int(child_id),)
+            )
+            return cur.fetchall()
+
+    def list_owned_card_ids(self, child_id: int) -> List[str]:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT card_id FROM child_cards_v2 WHERE child_id=?", (int(child_id),))
+            return [r[0] for r in cur.fetchall()]
+
+    def add_child_card_v2(self, child_id: int, card_id: str) -> bool:
+        if not card_id:
+            return False
+        with self.lock:
+            cur = self.conn.cursor()
+            try:
+                cur.execute(
+                    "INSERT OR IGNORE INTO child_cards_v2(child_id, card_id, obtained_at) VALUES(?,?,?)",
+                    (int(child_id), str(card_id).strip(), now_iso())
+                )
+                self.conn.commit()
+                return cur.rowcount > 0
+            except Exception:
+                return False
+
+    def get_card_catalog(self) -> List[sqlite3.Row]:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT * FROM cards_catalog ORDER BY min_level ASC, rarity ASC, name ASC")
+            return cur.fetchall()
+
+    def upsert_progress_after_session(self, child_id: int, final_score: float) -> sqlite3.Row:
+        """Update XP/level/streak after a session. Returns updated progress row."""
+        from datetime import date
+        from .rewards import compute_xp_gain, level_from_xp
+
+        self.ensure_child_progress(child_id)
+        today = date.today().isoformat()
+
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT * FROM child_progress WHERE child_id=?", (int(child_id),))
+            p = cur.fetchone()
+            last_play = (p["last_play_date"] if p and "last_play_date" in p.keys() else None)
+
+            used_today = (last_play == today)
+            gain = compute_xp_gain(final_score=final_score, used_today=used_today)
+
+            xp = int(p["xp"] or 0) + int(gain)
+            lvl = int(level_from_xp(xp))
+            total = int(p["total_sessions"] or 0) + (0 if used_today else 1)
+
+            # streak: increments only once per day
+            streak = int(p["streak"] or 0)
+            if not used_today:
+                # naive streak: if last_play was yesterday -> +1 else reset to 1
+                try:
+                    from datetime import datetime, timedelta
+                    if last_play:
+                        d0 = datetime.fromisoformat(last_play).date()
+                        if d0 == (date.today() - timedelta(days=1)):
+                            streak += 1
+                        else:
+                            streak = 1
+                    else:
+                        streak = 1
+                except Exception:
+                    streak = 1
+
+            cur.execute(
+                """UPDATE child_progress SET xp=?, level=?, total_sessions=?, last_play_date=?, streak=? WHERE child_id=?""",
+                (xp, lvl, total, today, streak, int(child_id))
+            )
+            self.conn.commit()
+            cur.execute("SELECT * FROM child_progress WHERE child_id=?", (int(child_id),))
+            return cur.fetchone()
+
+    def get_score_series(self, child_id: int, phoneme: str) -> List[tuple]:
+        """Return list of (created_at, final_score) for an enfant + phonème."""
+        ph = (phoneme or "").strip()
+        with self.lock:
+            cur = self.conn.cursor()
+            if not ph or ph.lower() == "tous":
+                cur.execute(
+                    """SELECT created_at, final_score FROM sessions
+                         WHERE child_id=? AND final_score IS NOT NULL
+                         ORDER BY datetime(REPLACE(created_at,'T',' ')) ASC""",
+                    (int(child_id),)
+                )
+            else:
+                cur.execute(
+                    """SELECT created_at, final_score FROM sessions
+                         WHERE child_id=? AND phoneme_target=? AND final_score IS NOT NULL
+                         ORDER BY datetime(REPLACE(created_at,'T',' ')) ASC""",
+                    (int(child_id), ph)
+                )
+            return [(r[0], float(r[1])) for r in cur.fetchall() if r[0] and r[1] is not None]
 
     def list_distinct_phonemes(self, child_id: Optional[int]=None, limit: int=50) -> List[str]:
         """Return distinct phoneme_target values (empty/NULL excluded), optionally filtered by child."""
