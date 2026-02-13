@@ -225,6 +225,12 @@ class DashboardDialog(tk.Toplevel):
             return
         self.dl.delete_sessions_by_ids(ids)
         self.refresh()
+        # UX: rester sur le TDB après suppression (évite de revenir visuellement à la fenêtre principale)
+        try:
+            self.lift()
+            self.focus_force()
+        except Exception:
+            pass
 
     def replay_selected(self):
         sel = self.tree.selection()

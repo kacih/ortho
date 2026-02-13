@@ -14,6 +14,18 @@ except Exception:
 log = logging.getLogger(__name__)
 
 
+def _xml_escape(s: str) -> str:
+    """Minimal XML escaping for SSML."""
+    return (
+        (s or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&apos;")
+    )
+
+
 def _ps_run(script: str) -> subprocess.CompletedProcess:
     """
     Run PowerShell script (Windows). NoProfile = stable.
@@ -87,8 +99,14 @@ def _speak_powershell(text: str, voice: Optional[str], rate: int, volume: int) -
         return
     text = text.replace(".", ". ").replace(",", ", ").replace(";", "; ")
 
+    # NOTE UX: certains périphériques "réveillent" la sortie audio et mangent
+    # les premières lettres. On injecte un léger pré-silence via SSML.
+    pre_ms = 120
+    ssml_text = _xml_escape(text)
+    ssml = f"<speak version='1.0' xml:lang='fr-FR'><break time='{pre_ms}ms'/>{ssml_text}</speak>"
+
     # Escape for PowerShell double-quoted string
-    safe_text = text.replace("\\", "\\\\").replace('"', '`"')
+    safe_ssml = ssml.replace("\\", "\\\\").replace('"', '`"')
 
     voice_line = ""
     if voice:
@@ -101,7 +119,7 @@ def _speak_powershell(text: str, voice: Optional[str], rate: int, volume: int) -
         f"{voice_line}"
         f"$s.Rate = {int(max(-10, min(10, rate)))};"
         f"$s.Volume = {int(max(0, min(100, volume)))};"
-        f'$s.Speak("{safe_text}");'
+        f'$s.SpeakSsml("{safe_ssml}");'
     )
 
     try:

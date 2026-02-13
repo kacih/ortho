@@ -18,6 +18,9 @@ class ChildManagerDialog(tk.Toplevel):
             self.tree.column(c, width=w, anchor="w")
         self.tree.pack(fill="both", expand=True, padx=10, pady=10)
 
+        # UX: double-clic = sélectionner l'enfant et fermer
+        self.tree.bind("<Double-1>", lambda e: self.select_child())
+
         btns = ttk.Frame(self)
         btns.pack(fill="x", padx=10, pady=8)
 

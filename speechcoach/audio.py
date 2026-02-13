@@ -70,6 +70,19 @@ class AudioEngine:
         if not os.path.exists(path):
             return
         data, sr = sf.read(path, dtype="float32", always_2d=False)
+        # UX: certains drivers "mangent" l'attaque du son au démarrage.
+        # On ajoute un très léger pré-roll (silence) pour fiabiliser.
+        if np is not None and sr and sr > 0:
+            try:
+                pre = int(0.05 * float(sr))  # 50ms
+                if pre > 0:
+                    if getattr(data, "ndim", 1) == 1:
+                        data = np.concatenate([np.zeros(pre, dtype=np.float32), data.astype(np.float32)])
+                    else:
+                        z = np.zeros((pre, data.shape[1]), dtype=np.float32)
+                        data = np.concatenate([z, data.astype(np.float32)], axis=0)
+            except Exception:
+                pass
         try:
             sd.play(data, sr, device=self.output_device)
             sd.wait()

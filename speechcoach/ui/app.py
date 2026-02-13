@@ -17,8 +17,9 @@ from speechcoach.game import GameController
 
 from .dialogs_children import ChildManagerDialog
 from .dialogs_dashboard import DashboardDialog
+from .dialogs_audio import AudioSettingsDialog as AudioDevicesDialog
 from .panels_analysis import AnalysisPanel
-from speechcoach.ui.audio_settings import AudioSettingsDialog
+from speechcoach.ui.audio_settings import AudioSettingsDialog as TTSAudioSettingsDialog
 
 
 class SpeechCoachApp(tk.Tk):
@@ -60,11 +61,13 @@ class SpeechCoachApp(tk.Tk):
 
         self.protocol("WM_DELETE_WINDOW", self.on_close)
     
-    def open_audio_settings(self):
-        """
-        Open TTS / audio settings dialog.
-        """
-        AudioSettingsDialog(self, self.audio)
+    def open_audio_devices(self):
+        """Open audio device selection (micro + output)."""
+        AudioDevicesDialog(self, self.audio)
+
+    def open_tts_settings(self):
+        """Open TTS voice/rate/volume settings dialog."""
+        TTSAudioSettingsDialog(self, self.audio)
 
     def _build_menu(self):
         menubar = tk.Menu(self)
@@ -74,7 +77,8 @@ class SpeechCoachApp(tk.Tk):
         menubar.add_cascade(label="Enfants", menu=m_child)
 
         m_audio = tk.Menu(menubar, tearoff=0)
-        m_audio.add_command(label="Audio (micro/sortie)…", command=self.open_audio_settings)
+        m_audio.add_command(label="Audio (micro/sortie)…", command=self.open_audio_devices)
+        m_audio.add_command(label="Voix TTS…", command=self.open_tts_settings)
         m_audio.add_separator()
         m_audio.add_command(label="Warmup TTS (thread)", command=lambda: threading.Thread(target=self.audio.tts.warmup, daemon=True).start())
         menubar.add_cascade(label="Audio", menu=m_audio)
@@ -87,7 +91,7 @@ class SpeechCoachApp(tk.Tk):
         m_help.add_command(label="À propos", command=lambda: messagebox.showinfo("À propos", f"{APP_NAME}\n{APP_VERSION}"))
         menubar.add_cascade(label="Aide", menu=m_help)
         options_menu = tk.Menu(menubar, tearoff=0)
-        options_menu.add_command(label="Réglages audio", command=self.open_audio_settings)
+        options_menu.add_command(label="Voix TTS", command=self.open_tts_settings)
 
         menubar.add_cascade(label="Options", menu=options_menu)
 
@@ -184,9 +188,7 @@ class SpeechCoachApp(tk.Tk):
 
     def show_evolution_graph(self, session_id, child_id, phoneme):
         print("GRAPH:", session_id, child_id, phoneme)
-    
-    def open_audio_settings(self):
-        AudioSettingsDialog(self, self.audio)
+
 
     def start_game(self):
         if not self.current_child_id:
@@ -228,8 +230,9 @@ class SpeechCoachApp(tk.Tk):
         self.lbl_story.config(text=f"Story: {story_title} — Tour {k}/{total}")
         self.lbl_sentence.config(text=f"Phrase: {expected}")
         self.lbl_target.config(text=f"Phonème cible: {phoneme}")
-        self.analysis_panel.set_metrics({})
-        self.txt_rec.delete("1.0", "end")
+        # UX: conserver les derniers indicateurs + texte reconnu affichés
+        # jusqu'à la fin de l'analyse du son suivant.
+        # Donc: ne pas vider ici.
 
     def on_analysis(self, metrics: dict):
         self.analysis_panel.set_metrics(metrics)
