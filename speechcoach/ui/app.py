@@ -15,7 +15,7 @@ from speechcoach.stories import StoryEngine
 from speechcoach.audio import AudioEngine
 from speechcoach.asr import ASREngine
 from speechcoach.game import GameController
-from speechcoach.session_manager import build_session_plan
+from speechcoach.session_manager import build_session_plan, get_preset_plan, preset_plans
 from speechcoach.rewards import load_catalog, choose_new_card_for_child
 
 from .dialogs_children import ChildManagerDialog
@@ -168,6 +168,19 @@ class SpeechCoachApp(tk.Tk):
         )
         self.chk_child_mode.pack(side="left", padx=6)
 
+        # Sprint 1: plan presets (adult mode)
+        ttk.Label(top, text="Plan:").pack(side="left")
+        self.var_plan_id = tk.StringVar(value="standard")
+        self.cmb_plan = ttk.Combobox(
+            top,
+            textvariable=self.var_plan_id,
+            state="readonly",
+            width=12,
+            values=["libre","decouverte","standard","intensif"]
+        )
+        self.cmb_plan.pack(side="left", padx=6)
+        self.cmb_plan.bind("<<ComboboxSelected>>", lambda e: self.on_plan_change())
+
         ttk.Label(top, text="Durée (min):").pack(side="left")
         self.var_minutes = tk.IntVar(value=3)
         self.spin_minutes = ttk.Spinbox(top, from_=1, to=20, textvariable=self.var_minutes, width=4, command=self.on_duration_change)
@@ -245,8 +258,39 @@ class SpeechCoachApp(tk.Tk):
 
 
     
+    def on_plan_change(self):
+        """Apply preset plan values to duration/rounds (Sprint 1)."""
+        try:
+            # Do not interfere with child mode
+            if getattr(self, "var_child_mode", None) is not None and self.var_child_mode.get():
+                return
+            pid = (self.var_plan_id.get() or "libre").strip().lower()
+            if pid in ("decouverte","standard","intensif"):
+                plan = get_preset_plan(pid)
+                try:
+                    self.var_minutes.set(int(plan.duration_min))
+                except Exception:
+                    pass
+                try:
+                    self.var_rounds.set(int(plan.rounds))
+                except Exception:
+                    pass
+            else:
+                # Libre: keep current rounds
+                pass
+        except Exception:
+            pass
+
     def on_duration_change(self):
         """Recompute auto rounds when duration changes."""
+        # In adult preset mode, rounds are driven by the preset, not by minutes.
+        try:
+            if getattr(self, "var_child_mode", None) is not None and not self.var_child_mode.get():
+                pid = (getattr(self, "var_plan_id", None) and self.var_plan_id.get()) or "libre"
+                if str(pid).strip().lower() in ("decouverte","standard","intensif"):
+                    return
+        except Exception:
+            pass
         try:
             if not self.current_child_id:
                 return
@@ -301,9 +345,9 @@ class SpeechCoachApp(tk.Tk):
             pass
 
         self.set_status(f"🎮 Session auto : {plan.rounds} tours (~{plan.duration_min} min)")
-        return self._start_with_rounds(plan.rounds)
+        return self._start_with_rounds(plan.rounds, plan=plan)
 
-    def _start_with_rounds(self, rounds: int):
+    def _start_with_rounds(self, rounds: int, plan=None):
         """Internal helper to start the game safely with the given number of rounds."""
         try:
             self.btn_start.config(state="disabled")
@@ -315,7 +359,7 @@ class SpeechCoachApp(tk.Tk):
             else:
                 self.btn_pause.config(state="normal")
                 self.btn_replay.config(state="normal")
-            self.game.start(rounds=int(rounds))
+            self.game.start(rounds=int(rounds), plan=plan)
         except Exception as e:
             messagebox.showerror("Erreur", str(e))
             self.btn_start.config(state="normal")
@@ -337,7 +381,10 @@ class SpeechCoachApp(tk.Tk):
             return self.start_session_auto(duration_min=3)
 
         try:
-            self._start_with_rounds(int(self.var_rounds.get()))
+            pid = (getattr(self, "var_plan_id", None) and self.var_plan_id.get()) or "libre"
+            pid = str(pid).strip().lower()
+            plan = get_preset_plan(pid) if pid in ("decouverte","standard","intensif") else None
+            self._start_with_rounds(int(self.var_rounds.get()), plan=plan)
         except Exception as e:
             self.on_end()
             messagebox.showerror("Erreur", str(e))

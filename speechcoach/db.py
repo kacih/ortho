@@ -42,6 +42,12 @@ CREATE TABLE IF NOT EXISTS sessions(
   focus_start_sec REAL,
   focus_end_sec REAL,
 
+  -- Sprint 1: session plan metadata
+  plan_id TEXT,
+  plan_name TEXT,
+  plan_mode TEXT,
+  plan_json TEXT,
+
   FOREIGN KEY(child_id) REFERENCES children(id)
 );
 
@@ -117,6 +123,21 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     cur.executescript(DDL)
 
     
+
+
+    # ---- Ensure sessions plan columns exist (Sprint 1)
+    try:
+        if not _column_exists(cur, "sessions", "plan_id"):
+            cur.execute("ALTER TABLE sessions ADD COLUMN plan_id TEXT")
+        if not _column_exists(cur, "sessions", "plan_name"):
+            cur.execute("ALTER TABLE sessions ADD COLUMN plan_name TEXT")
+        if not _column_exists(cur, "sessions", "plan_mode"):
+            cur.execute("ALTER TABLE sessions ADD COLUMN plan_mode TEXT")
+        if not _column_exists(cur, "sessions", "plan_json"):
+            cur.execute("ALTER TABLE sessions ADD COLUMN plan_json TEXT")
+    except Exception:
+        pass
+
     # ---- Ensure child_cards_v2 snapshot columns exist (tolerant migrations)
     try:
         if not _column_exists(cur, "child_cards_v2", "card_name"):
@@ -485,7 +506,8 @@ class DataLayer:
             "expected_text","recognized_text","wer","audio_path","duration_sec",
             "phoneme_target","spectral_centroid_hz","phoneme_quality",
             "features_json","acoustic_score","acoustic_contrast","final_score",
-            "phoneme_confidence","focus_start_sec","focus_end_sec"
+            "phoneme_confidence","focus_start_sec","focus_end_sec",
+            "plan_id","plan_name","plan_mode","plan_json"
         ]
         values = [s.get(c) for c in cols]
         with self.lock:
