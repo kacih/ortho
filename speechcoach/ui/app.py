@@ -173,6 +173,42 @@ class SpeechCoachApp(tk.Tk):
         )
         self.chk_child_mode.pack(side="left", padx=6)
 
+        # Sprint 3: mode enseignant (enchaînement rapide)
+        self.var_teacher_mode = tk.BooleanVar(value=False)
+        self.chk_teacher_mode = ttk.Checkbutton(
+            top,
+            text="Mode enseignant",
+            variable=self.var_teacher_mode,
+            command=self.on_toggle_teacher_mode
+        )
+        self.chk_teacher_mode.pack(side="left", padx=6)
+
+        self.teacher_frame = ttk.Frame(top)
+        # (packed only when enabled)
+        ttk.Label(self.teacher_frame, text="Enchaîner:").pack(side="left")
+        self.var_teacher_child = tk.StringVar(value="")
+        self.cmb_teacher_child = ttk.Combobox(
+            self.teacher_frame,
+            textvariable=self.var_teacher_child,
+            state="readonly",
+            width=24,
+            values=[]
+        )
+        self.cmb_teacher_child.pack(side="left", padx=6)
+        self.cmb_teacher_child.bind("<<ComboboxSelected>>", lambda e: self.on_teacher_child_selected())
+        self.var_teacher_autostart = tk.BooleanVar(value=False)
+        self.chk_teacher_autostart = ttk.Checkbutton(
+            self.teacher_frame,
+            text="Auto démarrer",
+            variable=self.var_teacher_autostart
+        )
+        self.chk_teacher_autostart.pack(side="left", padx=6)
+        self.btn_teacher_next = ttk.Button(self.teacher_frame, text="⏭️ Suivant", command=self.teacher_next_child)
+        self.btn_teacher_next.pack(side="left", padx=4)
+        self._teacher_children = []
+        self._teacher_child_keys = []
+        self._teacher_index = -1
+
         # Sprint 1/2: plan presets + user presets (adult mode)
         ttk.Label(top, text="Plan:").pack(side="left")
         self.var_plan_id = tk.StringVar(value="standard")
@@ -255,7 +291,12 @@ class SpeechCoachApp(tk.Tk):
             self.lbl_child.config(text=f"{r['name']} (id={child_id})")
         else:
             self.lbl_child.config(text=f"id={child_id}")
-
+        # keep teacher combobox in sync
+        try:
+            if getattr(self, 'var_teacher_mode', None) is not None and self.var_teacher_mode.get():
+                self.refresh_teacher_children()
+        except Exception:
+            pass
     def open_dashboard(self):
         DashboardDialog(
             self,
@@ -387,7 +428,7 @@ class SpeechCoachApp(tk.Tk):
                                    duration_min=int(self.var_minutes.get()),
                                    rounds=int(self.var_rounds.get()))
 
-            name = simpledialog.askstring("Enregistrer un plan", "Nom du plan :", parent=self.root)
+            name = simpledialog.askstring("Enregistrer un plan", "Nom du plan :", parent=self)
             if not name:
                 return
 
@@ -454,6 +495,88 @@ class SpeechCoachApp(tk.Tk):
         self.on_duration_change()
 
 
+
+    # ---- Sprint 3: mode enseignant
+    def on_toggle_teacher_mode(self):
+        enabled = bool(self.var_teacher_mode.get()) if getattr(self, 'var_teacher_mode', None) is not None else False
+        if enabled:
+            # Show teacher quick-switch controls
+            self.teacher_frame.pack(side='left', padx=10)
+            self.refresh_teacher_children()
+            # In teacher mode, avoid accidental child auto-mode
+            try:
+                self.var_child_mode.set(False)
+                self.on_toggle_mode()
+            except Exception:
+                pass
+        else:
+            try:
+                self.teacher_frame.pack_forget()
+            except Exception:
+                pass
+
+    def refresh_teacher_children(self):
+        try:
+            rows = self.dl.list_children()
+        except Exception:
+            rows = []
+        # Build display keys 'Name (id=..)'
+        keys = []
+        children = []
+        for r in rows:
+            try:
+                cid = int(r['id'])
+            except Exception:
+                continue
+            name = r.get('name', '')
+            key = f"{name} (id={cid})"
+            keys.append(key)
+            children.append({'id': cid, 'name': name, 'key': key})
+        # sort by name, then id
+        children.sort(key=lambda x: (x['name'].lower(), x['id']))
+        self._teacher_children = children
+        self._teacher_child_keys = [c['key'] for c in children]
+        self.cmb_teacher_child['values'] = self._teacher_child_keys
+
+        # Update selection index
+        self._teacher_index = -1
+        if self.current_child_id is not None:
+            for i,c in enumerate(children):
+                if c['id'] == self.current_child_id:
+                    self._teacher_index = i
+                    self.var_teacher_child.set(c['key'])
+                    break
+        if self._teacher_index == -1 and children:
+            self._teacher_index = 0
+            self.var_teacher_child.set(children[0]['key'])
+
+    def on_teacher_child_selected(self):
+        key = self.var_teacher_child.get()
+        for i,c in enumerate(getattr(self, '_teacher_children', []) or []):
+            if c['key'] == key:
+                self._teacher_index = i
+                self.set_child(c['id'])
+                break
+
+    def teacher_next_child(self):
+        children = getattr(self, '_teacher_children', []) or []
+        if not children:
+            self.refresh_teacher_children()
+            children = getattr(self, '_teacher_children', []) or []
+        if not children:
+            messagebox.showinfo('Mode enseignant', 'Aucun enfant enregistré.')
+            return
+        self._teacher_index = (self._teacher_index + 1) % len(children)
+        c = children[self._teacher_index]
+        self.var_teacher_child.set(c['key'])
+        self.set_child(c['id'])
+        if bool(getattr(self, 'var_teacher_autostart', tk.BooleanVar(value=False)).get()):
+            # Auto-start only if not already running
+            try:
+                if getattr(self.game, 'state', None) in (None, GameState.IDLE, GameState.DONE):
+                    self.start_game()
+            except Exception:
+                pass
     def start_session_auto(self, duration_min: int = 10):
         """Start a short, guided session adapted to the selected child."""
         if not self.current_child_id:
