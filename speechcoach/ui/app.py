@@ -22,6 +22,8 @@ from speechcoach.rewards import load_catalog, choose_new_card_for_child
 
 from .dialogs_children import ChildManagerDialog
 from .dialogs_dashboard import DashboardDialog
+from .dialogs_progress import ProgressDialog
+from .dialogs_class import ClassOverviewDialog
 from .dialogs_audio import AudioSettingsDialog as AudioDevicesDialog
 from .panels_analysis import AnalysisPanel
 from speechcoach.ui.audio_settings import AudioSettingsDialog as TTSAudioSettingsDialog
@@ -138,6 +140,8 @@ class SpeechCoachApp(tk.Tk):
 
         m_dash = tk.Menu(menubar, tearoff=0)
         m_dash.add_command(label="Dashboard Pro…", command=self.open_dashboard)
+        m_dash.add_command(label="Progrès enfant…", command=self.open_progress)
+        m_dash.add_command(label="Classe / Groupe…", command=self.open_class_overview)
         menubar.add_cascade(label="TDB", menu=m_dash)
         self._menu_dash = m_dash
 
@@ -334,6 +338,18 @@ class SpeechCoachApp(tk.Tk):
             self.current_child_id,
             on_pick=self.show_evolution_graph
         )
+
+    def open_progress(self):
+        """Open the progress/bilan dashboard (Sprint 6)."""
+        ProgressDialog(
+            self,
+            self.dl,
+            self.current_child_id,
+        )
+
+    def open_class_overview(self):
+        """Open class/group overview (Sprint 7)."""
+        ClassOverviewDialog(self, self.dl)
 
     def show_evolution_graph(self, session_id, child_id, phoneme):
         print("GRAPH:", session_id, child_id, phoneme)

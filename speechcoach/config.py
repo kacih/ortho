@@ -1,7 +1,7 @@
 import os
 
 APP_NAME = "Speech Coach"
-APP_VERSION = "7.16.0"
+APP_VERSION = "7.18.0"
 
 DEFAULT_SAMPLE_RATE = 16000
 
