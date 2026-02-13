@@ -165,13 +165,41 @@ class GameController:
                     f"{self.child_id}_{story.story_id}_{int(time.time())}_{i+1}.wav"
                 )
 
-                dur, thr = self.audio.record_until_silence_rms(
-                    wav_path,
-                    stop_event=self._stop_event
-                )
+                # ---- RECORD (robust)
+                # Sur certains micros/drivers, le tout premier enregistrement peut être
+                # trop court (stop_event, init stream, bruit). On retente une fois.
+                dur, thr = 0.0, 0.0
+                for attempt in range(2):
+                    if self._stop_event.is_set():
+                        break
+                    cur_path = wav_path if attempt == 0 else wav_path.replace(".wav", f"_retry{attempt}.wav")
+                    dur, thr = self.audio.record_until_silence_rms(
+                        cur_path,
+                        stop_event=self._stop_event
+                    )
+                    wav_path = cur_path
+                    if dur >= 0.35:
+                        break
+                    # feedback + petit délai pour stabiliser
+                    self._status("🎙️ Trop court, on recommence")
+                    try:
+                        self.audio.tts.speak("On recommence")
+                    except Exception:
+                        pass
+                    time.sleep(0.2)
 
                 if self._stop_event.is_set():
                     break
+
+                # Still too short after retries: skip this turn to avoid polluting DB/TDB
+                if dur < 0.35:
+                    self._status("⚠️ Enregistrement trop court")
+                    try:
+                        self.audio.tts.speak("Je n'ai pas bien entendu. On passe au suivant.")
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+                    continue
 
                 # ---- ASR
                 self.state = GameState.ANALYZING

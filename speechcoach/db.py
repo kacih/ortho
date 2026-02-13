@@ -69,6 +69,9 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     cur.executescript(DDL)
 
     add_cols = [
+        # Children schema upgrades (older DBs might miss these)
+        ("children", "avatar_path", "TEXT"),
+        ("children", "created_at", "TEXT"),
         ("sessions", "features_json", "TEXT"),
         ("sessions", "acoustic_score", "REAL"),
         ("sessions", "acoustic_contrast", "REAL"),
@@ -110,7 +113,11 @@ class DataLayer:
     def list_children(self):
         with self.lock:
             cur = self.conn.cursor()
-            cur.execute("SELECT * FROM children ORDER BY created_at DESC")
+            # Older DBs may not have created_at yet; be defensive.
+            if _column_exists(cur, "children", "created_at"):
+                cur.execute("SELECT * FROM children ORDER BY created_at DESC")
+            else:
+                cur.execute("SELECT * FROM children ORDER BY id DESC")
             return cur.fetchall()
 
     def add_child(self, name: str, age: Optional[int], sex: str, grade: str, avatar_path: str) -> int:

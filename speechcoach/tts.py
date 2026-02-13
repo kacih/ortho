@@ -100,13 +100,18 @@ def _speak_powershell(text: str, voice: Optional[str], rate: int, volume: int) -
     text = text.replace(".", ". ").replace(",", ", ").replace(";", "; ")
 
     # NOTE UX: certains périphériques "réveillent" la sortie audio et mangent
-    # les premières lettres. On injecte un léger pré-silence via SSML.
-    pre_ms = 120
+    # les premières lettres. On fait un "wake" explicite (silence SSML), puis
+    # on parle le texte (avec un léger break). C'est volontairement un peu
+    # conservateur: mieux vaut 200ms de latence que des syllabes tronquées.
+    wake_ms = 250
+    pre_ms = 180
     ssml_text = _xml_escape(text)
-    ssml = f"<speak version='1.0' xml:lang='fr-FR'><break time='{pre_ms}ms'/>{ssml_text}</speak>"
+    ssml_wake = f"<speak version='1.0' xml:lang='fr-FR'><break time='{wake_ms}ms'/></speak>"
+    ssml_main = f"<speak version='1.0' xml:lang='fr-FR'><break time='{pre_ms}ms'/>{ssml_text}</speak>"
 
     # Escape for PowerShell double-quoted string
-    safe_ssml = ssml.replace("\\", "\\\\").replace('"', '`"')
+    safe_wake = ssml_wake.replace("\\", "\\\\").replace('"', '`"')
+    safe_main = ssml_main.replace("\\", "\\\\").replace('"', '`"')
 
     voice_line = ""
     if voice:
@@ -119,7 +124,8 @@ def _speak_powershell(text: str, voice: Optional[str], rate: int, volume: int) -
         f"{voice_line}"
         f"$s.Rate = {int(max(-10, min(10, rate)))};"
         f"$s.Volume = {int(max(0, min(100, volume)))};"
-        f'$s.SpeakSsml("{safe_ssml}");'
+        f'$s.SpeakSsml("{safe_wake}");'
+        f'$s.SpeakSsml("{safe_main}");'
     )
 
     try:
