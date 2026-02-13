@@ -7,6 +7,7 @@ from datetime import datetime
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
+from speechcoach.reports_pdf import build_child_progress_pdf
 
 class ProgressDialog(tk.Toplevel):
     """Child-friendly progress dashboard for adults.
@@ -35,6 +36,7 @@ class ProgressDialog(tk.Toplevel):
 
         ttk.Button(top, text="Rafraîchir", command=self.refresh).pack(side="left")
         ttk.Button(top, text="Exporter CSV…", command=self.export_csv).pack(side="left", padx=8)
+        ttk.Button(top, text="Exporter PDF…", command=self.export_pdf).pack(side="left")
         ttk.Button(top, text="Fermer", command=self.destroy).pack(side="right")
 
         body = ttk.Frame(self)
@@ -254,3 +256,50 @@ class ProgressDialog(tk.Toplevel):
             p, d, *_ = improving[0]
             parts.append(f"Point positif : {p} progresse (+{d:.0%}).")
         return "\n".join(parts)
+
+
+    def export_pdf(self):
+        if not self.child_id:
+            messagebox.showwarning("Exporter PDF", "Veuillez d'abord sélectionner un enfant.")
+            return
+        try:
+            child = self.dl.get_child(self.child_id)
+            summary = self.dl.get_child_session_summary(self.child_id)
+            recent = self.dl.get_child_recent_scores(self.child_id, limit=20)
+            insights = self.dl.get_phoneme_insights(self.child_id, limit=40)
+            weaknesses = insights.get("weakest") or []
+            improving = insights.get("improving") or []
+        except Exception as e:
+            messagebox.showerror("Exporter PDF", f"Impossible de préparer le bilan.\n\n{e}")
+            return
+
+        os.makedirs("exports", exist_ok=True)
+        safe_name = "enfant"
+        try:
+            safe_name = (child["name"] or "enfant").strip().replace(" ", "_")
+        except Exception:
+            pass
+        default = os.path.join("exports", f"bilan_{safe_name}_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Exporter le bilan PDF",
+            initialfile=os.path.basename(default),
+            initialdir=os.path.dirname(default),
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+        )
+        if not path:
+            return
+
+        try:
+            build_child_progress_pdf(
+                path,
+                child=child,
+                summary=summary,
+                recent_scores=recent,
+                weaknesses=weaknesses,
+                improving=improving,
+            )
+            messagebox.showinfo("Exporter PDF", f"Bilan PDF créé :\n{path}")
+        except Exception as e:
+            messagebox.showerror("Exporter PDF", f"Échec génération PDF.\n\n{e}")

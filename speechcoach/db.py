@@ -533,11 +533,17 @@ class DataLayer:
             out.reverse()
             return out
 
-    def get_phoneme_insights(self, child_id: int, min_count: int = 3) -> Dict[str, Any]:
+    def get_phoneme_insights(
+        self,
+        child_id: int,
+        min_count: int = 3,
+        limit: int = 20,
+    ) -> Dict[str, Any]:
         """Compute simple 'weakest' and 'improving' phoneme insights.
 
         - Weakest: lowest avg score across all time (min_count sessions)
-        - Improving: compare last 10 vs previous 10 for the same phoneme
+        - Improving: compare a recent window vs a previous window for the same phoneme.
+          The number of samples considered is controlled by `limit`.
         """
         with self.lock:
             cur = self.conn.cursor()
@@ -557,22 +563,24 @@ class DataLayer:
 
             weakest = agg[:3]
 
-            # Improving: per phoneme, fetch last 20 scores and compare windows
+            # Improving: per phoneme, fetch last `limit` scores and compare windows
             improving: List[tuple] = []  # (p, delta, recent_avg, prev_avg, n)
             for p, n, _avg in agg:
                 cur.execute(
                     """SELECT final_score FROM sessions
                          WHERE child_id=? AND phoneme_target=? AND final_score IS NOT NULL
                          ORDER BY datetime(REPLACE(created_at,'T',' ')) DESC
-                         LIMIT 20""",
-                    (int(child_id), p),
+                         LIMIT ?""",
+                    (int(child_id), p, int(limit)),
                 )
                 vals = [float(x[0]) for x in cur.fetchall() if x[0] is not None]
                 if len(vals) < 10:
                     continue
-                recent = vals[:10]
-                prev = vals[10:20] if len(vals) >= 20 else vals[10:]
-                if len(prev) < 5:
+                # Use half/half windows, falling back safely for small limits.
+                half = max(5, int(limit) // 2)
+                recent = vals[:half]
+                prev = vals[half: (2 * half)]
+                if len(recent) < 5 or len(prev) < 5:
                     continue
                 recent_avg = sum(recent) / len(recent)
                 prev_avg = sum(prev) / len(prev)

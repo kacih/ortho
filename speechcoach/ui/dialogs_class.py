@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 from .dialogs_progress import ProgressDialog
+from speechcoach.reports_pdf import build_group_progress_pdf
 
 
 class ClassOverviewDialog(tk.Toplevel):
@@ -32,6 +33,7 @@ class ClassOverviewDialog(tk.Toplevel):
 
         ttk.Button(top, text="Rafraîchir", command=self.refresh).pack(side=tk.RIGHT)
         ttk.Button(top, text="Exporter CSV…", command=self.export_csv).pack(side=tk.RIGHT, padx=(0, 8))
+        ttk.Button(top, text="Exporter PDF…", command=self.export_pdf).pack(side=tk.RIGHT, padx=(0, 8))
 
         # Filters row
         filters = ttk.Frame(self)
@@ -143,6 +145,7 @@ class ClassOverviewDialog(tk.Toplevel):
         # Sort: improving first, then stable, then declining; within by name
         order = {"▲": 0, "■": 1, "▼": 2}
         rows.sort(key=lambda r: (order.get(r.get("status", "■"), 1), (r.get("name") or "").lower()))
+        self._filtered_rows = list(rows)
 
         for r in rows:
             avg = r.get("avg_score")
@@ -222,6 +225,7 @@ class ClassOverviewDialog(tk.Toplevel):
         q = (self.search_var.get() or "").strip().lower()
 
         rows = list(self._rows)
+        self._filtered_rows = rows
         if grade and grade != "Toutes":
             rows = [r for r in rows if (r.get("grade") or "").strip() == grade]
         if q:
@@ -255,3 +259,39 @@ class ClassOverviewDialog(tk.Toplevel):
                 ])
 
         messagebox.showinfo("Export CSV", f"Export effectué :\n{path}")
+
+
+    def export_pdf(self):
+        # Export filtered class view as a multi-page PDF (one page per child)
+        rows = getattr(self, "_filtered_rows", None) or []
+        if not rows:
+            messagebox.showwarning("Exporter PDF", "Aucun enfant à exporter (vérifiez les filtres).")
+            return
+
+        os.makedirs("exports", exist_ok=True)
+        default = os.path.join("exports", f"bilan_groupe_{__import__('datetime').datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
+        path = filedialog.asksaveasfilename(
+            parent=self,
+            title="Exporter le bilan PDF (groupe)",
+            initialfile=os.path.basename(default),
+            initialdir=os.path.dirname(default),
+            defaultextension=".pdf",
+            filetypes=[("PDF", "*.pdf")],
+        )
+        if not path:
+            return
+
+        def fetcher(child_id: int):
+            child = self.dl.get_child(child_id)
+            summary = self.dl.get_child_session_summary(child_id)
+            recent = self.dl.get_child_recent_scores(child_id, limit=20)
+            insights = self.dl.get_phoneme_insights(child_id, limit=40)
+            weaknesses = insights.get("weakest") or []
+            improving = insights.get("improving") or []
+            return child, summary, recent, weaknesses, improving
+
+        try:
+            build_group_progress_pdf(path, children=rows, fetcher=fetcher)
+            messagebox.showinfo("Exporter PDF", f"Bilan PDF créé :\n{path}")
+        except Exception as e:
+            messagebox.showerror("Exporter PDF", f"Échec génération PDF.\n\n{e}")
