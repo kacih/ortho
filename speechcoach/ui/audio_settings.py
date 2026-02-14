@@ -35,7 +35,9 @@ class AudioSettingsDialog(tk.Toplevel):
 
         # Voix
         ttk.Label(self, text="Voix").grid(row=2, column=0, sticky="w", padx=5, pady=5)
-        self.voice = tk.StringVar(value=self.settings.get("tts_voice", ""))
+        initial_backend = (self.backend.get() or "system")
+        initial_voice = self.settings.get("tts_voice", "") if initial_backend == "system" else self.settings.get("edge_voice", "")
+        self.voice = tk.StringVar(value=initial_voice)
         self.voice_cb = ttk.Combobox(
             self, textvariable=self.voice,
             values=voices, width=35, state="readonly"
@@ -66,7 +68,12 @@ class AudioSettingsDialog(tk.Toplevel):
     def refresh_voices(self):
         backend = self.backend.get() or "system"
         voices = list_voices() if backend == "system" else list_edge_voices("fr-")
+        stored = self.settings.get("tts_voice", "") if backend == "system" else self.settings.get("edge_voice", "")
         self.voice_cb.configure(values=voices)
+        # Prefer the stored voice for this backend when switching
+        if stored and (self.voice.get() != stored):
+            self.voice.set(stored)
+
         # If current voice not in list, clear it to avoid confusing saves
         if self.voice.get() and voices and self.voice.get() not in voices:
             self.voice.set("")
@@ -77,15 +84,25 @@ class AudioSettingsDialog(tk.Toplevel):
             pass
 
     def current(self):
-        return {
-            "tts_voice": self.voice.get(),
+        backend = (self.backend.get() or "system").strip()
+        out = {
+            "tts_voice": self.settings.get("tts_voice", ""),
+            "edge_voice": self.settings.get("edge_voice", ""),
             "tts_rate": self.rate.get(),
             "tts_volume": self.volume.get(),
-            "tts_backend": self.backend.get(),
+            "tts_backend": backend,
         }
+        # Store the picked voice into the right field
+        if backend == "edge":
+            out["edge_voice"] = self.voice.get()
+        else:
+            out["tts_voice"] = self.voice.get()
+        return out
 
     def save(self):
-        self.manager.save(self.current())
+        cur = self.current()
+        self.manager.save(cur)
+        self.settings.update(cur)
         # Apply to app engine
         if self.audio_engine is not None and hasattr(self.audio_engine, "tts"):
             try:
