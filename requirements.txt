@@ -1,11 +1,6 @@
-# SpeechCoach dependencies
-# Core
-soundfile
 sounddevice
-matplotlib
-
-# ASR (optional depending on usage)
+soundfile
+numpy
 faster-whisper
-
-# PDF export (optional)
 reportlab
+edge-tts
