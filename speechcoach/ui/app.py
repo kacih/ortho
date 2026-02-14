@@ -55,6 +55,21 @@ class SpeechCoachApp(tk.Tk):
         stories_path = pick_existing(DEFAULT_STORIES_PATH, FALLBACK_STORIES_PATH)
 
         self.dl = DataLayer(db_path)
+
+        # Guard: detect broken DataLayer (common after manual indentation edits)
+        try:
+            _need = ["list_exercises", "create_exercise", "list_session_runs_for_child", "list_grades"]
+            missing = [n for n in _need if not hasattr(self.dl, n)]
+            if missing:
+                messagebox.showerror(
+                    "Installation incomplète",
+                    "Certaines fonctions manquent dans la base de code (DataLayer).\n"
+                    "Méthodes manquantes: " + ", ".join(missing) + "\n\n"
+                    "Cela arrive souvent après une correction manuelle d'indentation dans db.py.\n"
+                    "Réinstallez le ZIP complet de la version.",
+                )
+        except Exception:
+            pass
         self.settings_mgr = SettingsManager(db_path)
         self._plan_key_to_plan = {}
 

@@ -80,53 +80,151 @@ class ExercisesDialog(tk.Toplevel):
     def _form(self, title: str, row: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         d = tk.Toplevel(self)
         d.title(title)
-        d.geometry("520x360")
+        d.geometry("560x420")
+        d.resizable(True, False)
         d.grab_set()
+        d.bind("<Escape>", lambda e: d.destroy())
+
+        # Lazy-load Edge voices (best effort)
+        try:
+            from speechcoach import tts as ttsmod
+            edge_voices = ttsmod.list_edge_voices("fr-")
+        except Exception:
+            edge_voices = []
+
+        voice_values = [""] + (edge_voices or [])
+
+        def _get(k, default=""):
+            if not row:
+                return default
+            try:
+                v = row.get(k)  # type: ignore[attr-defined]
+            except Exception:
+                v = row[k] if k in row else default
+            return default if v is None else v
+
+        try:
+            rate0 = float(_get("rate", 1.0) or 1.0)
+        except Exception:
+            rate0 = 1.0
+        rate0 = max(0.7, min(1.3, float(rate0)))
 
         vars_ = {
-            "title": tk.StringVar(value=(row.get("title") if row else "")),
-            "text": tk.StringVar(value=(row.get("text") if row else "")),
-            "type": tk.StringVar(value=(row.get("type") if row else "phrase")),
-            "objective": tk.StringVar(value=(row.get("objective") if row else "")),
-            "level": tk.StringVar(value=(str(row.get("level")) if row and row.get("level") is not None else "")),
-            "voice": tk.StringVar(value=(row.get("voice") if row else "")),
-            "rate": tk.StringVar(value=(str(row.get("rate")) if row and row.get("rate") is not None else "")),
-            "pause_ms": tk.StringVar(value=(str(row.get("pause_ms")) if row and row.get("pause_ms") is not None else "")),
+            "title": tk.StringVar(value=str(_get("title", ""))),
+            "text": tk.StringVar(value=str(_get("text", ""))),
+            "type": tk.StringVar(value=str(_get("type", "phrase") or "phrase")),
+            "objective": tk.StringVar(value=str(_get("objective", ""))),
+            "level": tk.StringVar(value=str(_get("level", "")) if _get("level", "") is not None else ""),
+            "voice": tk.StringVar(value=str(_get("voice", ""))),
+            "pause_ms": tk.StringVar(value=str(_get("pause_ms", "")) if _get("pause_ms", "") is not None else ""),
         }
+        var_rate = tk.DoubleVar(value=rate0)
 
-        frm = ttk.Frame(d); frm.pack(fill="both", expand=True, padx=12, pady=12)
+        frm = ttk.Frame(d)
+        frm.pack(fill="both", expand=True, padx=12, pady=12)
         frm.columnconfigure(1, weight=1)
 
-        def roww(label, var, r):
+        def row_entry(label, var, r):
             ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", pady=6)
             ttk.Entry(frm, textvariable=var).grid(row=r, column=1, sticky="ew", pady=6)
 
-        roww("Titre", vars_["title"], 0)
-        roww("Texte", vars_["text"], 1)
+        row_entry("Titre", vars_["title"], 0)
+        row_entry("Texte", vars_["text"], 1)
+
         ttk.Label(frm, text="Type").grid(row=2, column=0, sticky="w", pady=6)
-        ttk.Combobox(frm, textvariable=vars_["type"], values=["mot","phrase","liste"], state="readonly").grid(row=2, column=1, sticky="ew", pady=6)
-        roww("Objectif", vars_["objective"], 3)
-        roww("Niveau", vars_["level"], 4)
-        roww("Voix (option)", vars_["voice"], 5)
-        roww("Vitesse (option)", vars_["rate"], 6)
-        roww("Pause ms (option)", vars_["pause_ms"], 7)
+        ttk.Combobox(frm, textvariable=vars_["type"], values=["mot", "phrase", "liste"], state="readonly").grid(row=2, column=1, sticky="ew", pady=6)
+
+        row_entry("Objectif", vars_["objective"], 3)
+
+        ttk.Label(frm, text="Niveau (1–5)").grid(row=4, column=0, sticky="w", pady=6)
+        ttk.Entry(frm, textvariable=vars_["level"]).grid(row=4, column=1, sticky="ew", pady=6)
+
+        ttk.Label(frm, text="Voix Edge (option)").grid(row=5, column=0, sticky="w", pady=6)
+        cb_voice = ttk.Combobox(frm, textvariable=vars_["voice"], values=voice_values, state="readonly")
+        cb_voice.grid(row=5, column=1, sticky="ew", pady=6)
+
+        ttk.Label(frm, text="Vitesse (0.7 → 1.3)").grid(row=6, column=0, sticky="w", pady=6)
+        scale = ttk.Scale(frm, from_=0.7, to=1.3, variable=var_rate)
+        scale.grid(row=6, column=1, sticky="ew", pady=6)
+
+        lab_rate = ttk.Label(frm, text=f"{var_rate.get():.2f}")
+        lab_rate.grid(row=6, column=2, sticky="w", padx=8)
+
+        def _on_rate(*_):
+            try:
+                lab_rate.config(text=f"{var_rate.get():.2f}")
+            except Exception:
+                pass
+        var_rate.trace_add("write", _on_rate)
+
+        ttk.Label(frm, text="Pause ms (option)").grid(row=7, column=0, sticky="w", pady=6)
+        ttk.Entry(frm, textvariable=vars_["pause_ms"]).grid(row=7, column=1, sticky="ew", pady=6)
+
+        # Test button (best effort)
+        test_frame = ttk.Frame(frm)
+        test_frame.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        test_frame.columnconfigure(1, weight=1)
+
+        ttk.Label(test_frame, text="Test:").grid(row=0, column=0, sticky="w")
+        var_test = tk.StringVar(value="Bonjour. Ceci est un test de voix.")
+        ttk.Entry(test_frame, textvariable=var_test).grid(row=0, column=1, sticky="ew", padx=6)
+
+        def do_test():
+            try:
+                from speechcoach.tts import TTSEngine
+                eng = TTSEngine()
+                eng.backend = "edge"
+                v = (vars_["voice"].get() or "").strip()
+                if v:
+                    eng.edge_voice = v
+                try:
+                    eng.apply_settings({"tts_backend": "edge", "edge_voice": eng.edge_voice, "tts_rate": float(var_rate.get())})
+                except Exception:
+                    pass
+                eng.speak(var_test.get().strip() or "Bonjour.")
+            except Exception as e:
+                messagebox.showwarning("Test voix", f"Impossible de jouer le test : {e}")
+
+        ttk.Button(test_frame, text="Tester", command=do_test).grid(row=0, column=2, sticky="e")
 
         res = {"ok": False}
+
         def ok():
-            if not vars_["text"].get().strip():
+            text = vars_["text"].get().strip()
+            if not text:
                 messagebox.showwarning("Champ requis", "Le texte est obligatoire.")
                 return
+
+            lvl = vars_["level"].get().strip()
+            if lvl:
+                if not lvl.isdigit():
+                    messagebox.showwarning("Niveau invalide", "Le niveau doit être un entier entre 1 et 5.")
+                    return
+                iv = int(lvl)
+                if iv < 1 or iv > 5:
+                    messagebox.showwarning("Niveau invalide", "Le niveau doit être entre 1 et 5.")
+                    return
+
+            pm = vars_["pause_ms"].get().strip()
+            if pm and not pm.isdigit():
+                messagebox.showwarning("Pause invalide", "La pause doit être un entier (millisecondes).")
+                return
+
             res["ok"] = True
             d.destroy()
 
-        b = ttk.Frame(d); b.pack(fill="x", padx=12, pady=10)
+        b = ttk.Frame(d)
+        b.pack(fill="x", padx=12, pady=10)
         ttk.Button(b, text="Annuler", command=d.destroy).pack(side="right")
         ttk.Button(b, text="OK", command=ok).pack(side="right", padx=6)
 
         d.wait_window()
         if not res["ok"]:
             return None
-        return {k:v.get().strip() for k,v in vars_.items()}
+
+        out = {k: v.get().strip() for k, v in vars_.items()}
+        out["rate"] = f"{float(var_rate.get()):.2f}"
+        return out
 
     def add(self):
         data = self._form("Ajouter un exercice")
@@ -139,7 +237,6 @@ class ExercisesDialog(tk.Toplevel):
         ex_id = self._selected_id()
         if not ex_id:
             return
-        # fetch row from list
         rows = self.dl.list_exercises()
         row = None
         for r in rows:
@@ -177,11 +274,11 @@ class ExercisesDialog(tk.Toplevel):
         self.refresh()
 
     def import_csv(self):
-        path = filedialog.askopenfilename(title="Importer CSV", filetypes=[("CSV","*.csv"),("Tous","*.*")])
+        path = filedialog.askopenfilename(title="Importer CSV", filetypes=[("CSV", "*.csv"), ("Tous", "*.*")])
         if not path:
             return
         res = self.dl.import_exercises_csv(path)
-        msg = f"Import terminé. OK: {res.get('ok',0)}"
+        msg = f"Import terminé. OK: {res.get('ok', 0)}"
         errs = res.get("errors") or []
         if errs:
             msg += f"\nErreurs: {len(errs)}\n" + "\n".join(errs[:10])
