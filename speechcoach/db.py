@@ -137,6 +137,34 @@ CREATE TABLE IF NOT EXISTS session_runs(
 );
 CREATE INDEX IF NOT EXISTS idx_session_runs_child_created
 ON session_runs(child_id, created_at);
+
+
+-- Sprint 8: exercises library --------------------------------------------
+CREATE TABLE IF NOT EXISTS exercises(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT,
+  text TEXT,
+  type TEXT,
+  objective TEXT,
+  level INTEGER,
+  voice TEXT,
+  rate REAL,
+  pause_ms INTEGER,
+  created_at TEXT,
+  updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_exercises_objective_level ON exercises(objective, level);
+
+-- Sprint 8: assignments (playlist -> child/group) -------------------------
+CREATE TABLE IF NOT EXISTS assignments(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  target_type TEXT,
+  target_value TEXT,
+  plan_id INTEGER,
+  active INTEGER DEFAULT 1,
+  created_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_assignments_target ON assignments(target_type, target_value);
 """
 
 def _column_exists(cur: sqlite3.Cursor, table: str, col: str) -> bool:
@@ -146,9 +174,6 @@ def _column_exists(cur: sqlite3.Cursor, table: str, col: str) -> bool:
 def migrate_db(conn: sqlite3.Connection) -> None:
     cur = conn.cursor()
     cur.executescript(DDL)
-
-    
-
 
     # ---- Ensure sessions plan columns exist (Sprint 1)
     try:
@@ -163,6 +188,13 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     except Exception:
         pass
 
+    # ---- Sprint 8: ensure sessions.run_id exists (link to session_runs)
+    try:
+        if not _column_exists(cur, "sessions", "run_id"):
+            cur.execute("ALTER TABLE sessions ADD COLUMN run_id INTEGER")
+    except Exception:
+        pass
+
     # ---- Ensure child_cards_v2 snapshot columns exist (tolerant migrations)
     try:
         if not _column_exists(cur, "child_cards_v2", "card_name"):
@@ -174,7 +206,7 @@ def migrate_db(conn: sqlite3.Connection) -> None:
     except Exception:
         pass
 
-# ---- Seed cards_catalog if empty (best-effort)
+    # ---- Seed cards_catalog if empty (best-effort)
     try:
         cur.execute("SELECT COUNT(*) FROM cards_catalog")
         n = int(cur.fetchone()[0] or 0)
@@ -229,7 +261,7 @@ def migrate_db(conn: sqlite3.Connection) -> None:
 
     add_cols = [
         # Children schema upgrades (older DBs might miss these)
-                ("children", "avatar_blob", "BLOB"),
+        ("children", "avatar_blob", "BLOB"),
         ("children", "created_at", "TEXT"),
         ("sessions", "features_json", "TEXT"),
         ("sessions", "acoustic_score", "REAL"),
@@ -301,9 +333,13 @@ class DataLayer:
             cur = self.conn.cursor()
             # Older DBs may not have created_at yet; be defensive.
             if _column_exists(cur, "children", "created_at"):
-                cur.execute("SELECT * FROM children ORDER BY created_at DESC")
+                cur.execute("""SELECT id,name,age,sex,grade,avatar_blob,created_at
+                               FROM children
+                               ORDER BY created_at DESC""")
             else:
-                cur.execute("SELECT * FROM children ORDER BY id DESC")
+                cur.execute("""SELECT id,name,age,sex,grade,avatar_blob,created_at
+                               FROM children
+                               ORDER BY id DESC""")
             return cur.fetchall()
 
     def get_child(self, child_id: int):
@@ -757,6 +793,14 @@ class DataLayer:
             "phoneme_confidence","focus_start_sec","focus_end_sec",
             "plan_id","plan_name","plan_mode","plan_json"
         ]
+
+        # Sprint 8: link item rows to a session_run when available
+        try:
+            cur0 = self.conn.cursor()
+            if _column_exists(cur0, "sessions", "run_id") and "run_id" not in cols:
+                cols.append("run_id")
+        except Exception:
+            pass
         values = [s.get(c) for c in cols]
         with self.lock:
             cur = self.conn.cursor()
@@ -795,11 +839,26 @@ class DataLayer:
             self.conn.commit()
             return cur.lastrowid
 
-    def delete_session_plan(self, plan_id: int) -> None:
+    
+
+    def update_session_plan(self, plan_id: int, name: str, plan: Dict[str, Any]) -> None:
+        nm = (name or "").strip()
+        if not nm:
+            raise ValueError("Plan name is required")
+        pj = json.dumps(plan, ensure_ascii=False)
+        ts = now_iso()
         with self.lock:
             cur = self.conn.cursor()
-            cur.execute("DELETE FROM session_plans WHERE id=?", (int(plan_id),))
+            cur.execute(
+                "UPDATE session_plans SET name=?, plan_json=?, updated_at=? WHERE id=?",
+                (nm, pj, ts, int(plan_id))
+            )
             self.conn.commit()
+    def delete_session_plan(self, plan_id: int) -> None:
+            with self.lock:
+                cur = self.conn.cursor()
+                cur.execute("DELETE FROM session_plans WHERE id=?", (int(plan_id),))
+                self.conn.commit()
 
     def get_session_plan(self, plan_id: int) -> Optional[Dict[str, Any]]:
         with self.lock:
@@ -893,3 +952,153 @@ class DataLayer:
                 return json.loads(row["features_json"])
             except Exception:
                 return None
+
+
+    # --- Sprint 8: exercises -------------------------------------------------
+
+    def list_exercises(self, q: str = "", objective: str = "", level: Optional[int] = None, typ: str = "") -> List[sqlite3.Row]:
+        with self.lock:
+            cur = self.conn.cursor()
+            sql = "SELECT id,title,text,type,objective,level,voice,rate,pause_ms,created_at,updated_at FROM exercises WHERE 1=1"
+            args: List[Any] = []
+            if q:
+                sql += " AND (title LIKE ? OR text LIKE ?)"
+                args += [f"%{q}%", f"%{q}%"]
+            if objective:
+                sql += " AND objective = ?"
+                args.append(objective)
+            if level is not None and str(level).strip() != "":
+                try:
+                    lv = int(level)
+                    sql += " AND level = ?"
+                    args.append(lv)
+                except Exception:
+                    pass
+            if typ:
+                sql += " AND type = ?"
+                args.append(typ)
+            sql += " ORDER BY id DESC"
+            cur.execute(sql, args)
+            return cur.fetchall()
+
+    def create_exercise(self, data: Dict[str, Any]) -> int:
+        ts = now_iso()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "INSERT INTO exercises(title,text,type,objective,level,voice,rate,pause_ms,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    (data.get("title") or "").strip(),
+                    (data.get("text") or "").strip(),
+                    (data.get("type") or "phrase").strip(),
+                    (data.get("objective") or "").strip(),
+                    int(data["level"]) if data.get("level") not in (None, "") else None,
+                    (data.get("voice") or "").strip(),
+                    float(data["rate"]) if data.get("rate") not in (None, "") else None,
+                    int(data["pause_ms"]) if data.get("pause_ms") not in (None, "") else None,
+                    ts, ts
+                )
+            )
+            self.conn.commit()
+            return cur.lastrowid
+
+    def update_exercise(self, ex_id: int, data: Dict[str, Any]) -> None:
+        ts = now_iso()
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "UPDATE exercises SET title=?, text=?, type=?, objective=?, level=?, voice=?, rate=?, pause_ms=?, updated_at=? WHERE id=?",
+                (
+                    (data.get("title") or "").strip(),
+                    (data.get("text") or "").strip(),
+                    (data.get("type") or "phrase").strip(),
+                    (data.get("objective") or "").strip(),
+                    int(data["level"]) if data.get("level") not in (None, "") else None,
+                    (data.get("voice") or "").strip(),
+                    float(data["rate"]) if data.get("rate") not in (None, "") else None,
+                    int(data["pause_ms"]) if data.get("pause_ms") not in (None, "") else None,
+                    ts,
+                    int(ex_id)
+                )
+            )
+            self.conn.commit()
+
+    def delete_exercise(self, ex_id: int) -> None:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("DELETE FROM exercises WHERE id=?", (int(ex_id),))
+            self.conn.commit()
+
+    def import_exercises_csv(self, path: str, delimiter: Optional[str] = None) -> Dict[str, Any]:
+        """Import CSV with tolerant parsing. Expected columns: title,text,type,objective,level,(voice,rate,pause_ms)."""
+        import csv
+        ok = 0
+        errors: List[str] = []
+        if not path or not os.path.exists(path):
+            return {"ok": 0, "errors": ["Fichier introuvable."]}
+        # autodetect delimiter (FR ; or ,)
+        if delimiter is None:
+            try:
+                sample = open(path, "r", encoding="utf-8", errors="ignore").read(4096)
+                delimiter = ";" if sample.count(";") >= sample.count(",") else ","
+            except Exception:
+                delimiter = ";"
+        with open(path, "r", encoding="utf-8", errors="ignore", newline="") as f:
+            reader = csv.DictReader(f, delimiter=delimiter)
+            for i, row in enumerate(reader, start=2):
+                try:
+                    textv = (row.get("text") or row.get("phrase") or row.get("mot") or "").strip()
+                    titlev = (row.get("title") or row.get("titre") or textv[:40]).strip()
+                    if not textv:
+                        errors.append(f"Ligne {i}: texte vide")
+                        continue
+                    data = {
+                        "title": titlev,
+                        "text": textv,
+                        "type": (row.get("type") or "phrase").strip(),
+                        "objective": (row.get("objective") or row.get("objectif") or "").strip(),
+                        "level": (row.get("level") or row.get("niveau") or ""),
+                        "voice": (row.get("voice") or "").strip(),
+                        "rate": (row.get("rate") or "").strip(),
+                        "pause_ms": (row.get("pause_ms") or row.get("pause") or "").strip(),
+                    }
+                    self.create_exercise(data)
+                    ok += 1
+                except Exception as e:
+                    errors.append(f"Ligne {i}: {e}")
+        return {"ok": ok, "errors": errors}
+
+    # --- Sprint 8: history ---------------------------------------------------
+
+    def list_session_runs_for_child(self, child_id: int, limit: int = 50) -> List[sqlite3.Row]:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute(
+                "SELECT id, created_at, planned_items, completed_items, ended_early, early_end_reason, plan_json FROM session_runs WHERE child_id=? ORDER BY datetime(REPLACE(created_at,'T',' ')) DESC, id DESC LIMIT ?",
+                (int(child_id), int(limit))
+            )
+            return cur.fetchall()
+
+    def list_sessions_for_run(self, run_id: int) -> List[sqlite3.Row]:
+        with self.lock:
+            cur = self.conn.cursor()
+            if _column_exists(cur, "sessions", "run_id"):
+                cur.execute(
+                    "SELECT id, created_at, expected_text, recognized_text, final_score, wer, audio_path FROM sessions WHERE run_id=? ORDER BY id ASC",
+                    (int(run_id),)
+                )
+                return cur.fetchall()
+            return []
+
+    def list_grades(self) -> List[str]:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT DISTINCT grade FROM children WHERE grade IS NOT NULL AND TRIM(grade)<>'' ORDER BY grade ASC")
+            return [str(r[0]) for r in cur.fetchall()]
+
+    def list_children_by_grade(self, grade: str) -> List[sqlite3.Row]:
+        with self.lock:
+            cur = self.conn.cursor()
+            cur.execute("SELECT id,name,age,sex,grade,avatar_blob,created_at FROM children WHERE grade=? ORDER BY name ASC", (str(grade),))
+            return cur.fetchall()
+

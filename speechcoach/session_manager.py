@@ -31,6 +31,25 @@ class SessionPlan:
         return asdict(self)
 
 
+
+
+@dataclass(frozen=True)
+class PlaylistPlan:
+    """Session plan that plays a fixed list of exercises/phrases (Sprint 8)."""
+
+    plan_id: str = "playlist"
+    name: str = "Playlist"
+    mode: str = "playlist"
+    duration_min: int = 5
+    rounds: int = 10
+
+    items: List[Dict[str, Any]] = None  # [{"text": "...", "exercise_id": 1}, ...]
+
+    repeat_on_fail: bool = True
+    max_repeats_per_sentence: int = 1
+
+    def to_json_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 def preset_plans() -> List[SessionPlan]:
     """Hardcoded presets for Sprint 1 (no DB persistence yet)."""
 
@@ -124,9 +143,35 @@ def build_session_plan(child: Optional[Dict[str, Any]], duration_min: int = 3) -
     )
 
 
-def plan_from_json_dict(d: Dict[str, Any]) -> SessionPlan:
+def plan_from_json_dict(d: Dict[str, Any]):
     """Build a SessionPlan from a persisted JSON dict (DB/user preset)."""
     d = dict(d or {})
+    # Sprint 8: playlist plans keep a fixed items list
+    try:
+        if (d.get("mode") or "") == "playlist":
+            # Defensive typing
+            try:
+                d["duration_min"] = int(d.get("duration_min") or 5)
+            except Exception:
+                d["duration_min"] = 5
+            try:
+                d["rounds"] = int(d.get("rounds") or (len(d.get("items") or []) or 10))
+            except Exception:
+                d["rounds"] = 10
+            items = d.get("items") or []
+            # accept legacy: items_text = [".."]
+            if items and isinstance(items, list) and all(isinstance(x, str) for x in items):
+                items = [{"text": x} for x in items]
+            return PlaylistPlan(
+                name=str(d.get("name") or "Playlist"),
+                duration_min=int(d.get("duration_min") or 5),
+                rounds=int(d.get("rounds") or (len(items) or 10)),
+                items=items,
+                repeat_on_fail=bool(d.get("repeat_on_fail", True)),
+                max_repeats_per_sentence=int(d.get("max_repeats_per_sentence") or 1),
+            )
+    except Exception:
+        pass
     allowed = {f.name for f in SessionPlan.__dataclass_fields__.values()}
     clean = {k: d.get(k) for k in allowed if k in d}
     # Defensive typing

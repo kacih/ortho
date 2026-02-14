@@ -12,54 +12,22 @@ class ChildManagerDialog(tk.Toplevel):
         self.geometry("720x420")
         self.resizable(True, True)
 
+        self.bind("<Escape>", lambda e: self.destroy())
+
         self.dl = dl
         self.on_select = on_select
 
-        # UX: make rows taller so the avatar is clearly visible.
-        # Using a dedicated style avoids impacting other Treeviews.
         style = ttk.Style(self)
         style.configure("Children.Treeview", rowheight=56)
 
-        # NOTE UX: on utilise la colonne #0 pour afficher un avatar (icône).
-        # show="tree headings" permet de garder les colonnes en headings.
-        self.tree = ttk.Treeview(
-            self,
-            columns=("id","name","age","sex","grade","created"),
-            show="tree headings",
-            height=6,
-            style="Children.Treeview",
-        )
-        self.tree.heading("#0", text="Avatar")
-        self.tree.column("#0", width=60, anchor="center", stretch=False)
-        for c, w in [("id",60),("name",160),("age",60),("sex",80),("grade",80),("created",160)]:
-            self.tree.heading(c, text=c)
-            self.tree.column(c, width=w, anchor="w")
-        # Tree + scrollbar (buttons must stay visible without resizing)
-        tree_frame = ttk.Frame(self)
-        tree_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
-        yscroll = ttk.Scrollbar(tree_frame, orient="vertical")
-        yscroll.pack(side="right", fill="y")
-
-        self.tree.configure(yscrollcommand=yscroll.set)
-        yscroll.configure(command=self.tree.yview)
-
-        self.tree.pack(side="left", fill="both", expand=True)
-
-        # Keep PhotoImage references
-        self._avatars = {}
-
-        # UX: double-clic = sélectionner l'enfant et fermer
-        self.tree.bind("<Double-1>", lambda e: self.select_child())
-
-        # Main layout: buttons on the left, list on the right (better visibility on small screens)
+        # Main container
         main = ttk.Frame(self)
         main.pack(fill="both", expand=True, padx=10, pady=8)
 
+        # Left panel (buttons)
         left = ttk.Frame(main)
         left.pack(side="left", fill="y", padx=(0, 10))
 
-        # Vertical action buttons (always visible)
         ttk.Button(left, text="Ajouter", command=self.add_child).pack(fill="x", pady=(0, 6))
         ttk.Button(left, text="Modifier", command=self.edit_child).pack(fill="x", pady=(0, 6))
         ttk.Button(left, text="Supprimer", command=self.delete_child).pack(fill="x", pady=(0, 12))
@@ -68,14 +36,44 @@ class ChildManagerDialog(tk.Toplevel):
 
         ttk.Button(left, text="Sélectionner", command=self.select_child).pack(fill="x")
 
+        # Right panel (table)
         right = ttk.Frame(main)
         right.pack(side="left", fill="both", expand=True)
 
-        # Move tree into right frame
-        self.tree.pack_forget()
-        self.tree.pack(in_=right, fill="both", expand=True)
+        self.tree = ttk.Treeview(
+            right,
+            columns=("id", "name", "age", "sex", "grade", "created"),
+            show="tree headings",
+            height=10,
+            style="Children.Treeview",
+        )
+
+        self.tree.heading("#0", text="Avatar")
+        self.tree.column("#0", width=60, anchor="center", stretch=False)
+
+        for c, w in [
+            ("id", 60),
+            ("name", 160),
+            ("age", 60),
+            ("sex", 80),
+            ("grade", 80),
+            ("created", 160),
+        ]:
+            self.tree.heading(c, text=c)
+            self.tree.column(c, width=w, anchor="w")
+
+        yscroll = ttk.Scrollbar(right, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=yscroll.set)
+
+        self.tree.pack(side="left", fill="both", expand=True)
+        yscroll.pack(side="right", fill="y")
+
+        self._avatars = {}
+
+        self.tree.bind("<Double-1>", lambda e: self.select_child())
 
         self.refresh()
+
 
     def refresh(self):
         for i in self.tree.get_children():

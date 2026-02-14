@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 
 APP_NAME = "SpeechCoach"
-APP_VERSION = "7.22.1"
+APP_VERSION = "8.0.0"
 __version__ = APP_VERSION
 
 
