@@ -52,13 +52,28 @@ class ChildManagerDialog(tk.Toplevel):
         # UX: double-clic = sélectionner l'enfant et fermer
         self.tree.bind("<Double-1>", lambda e: self.select_child())
 
-        btns = ttk.Frame(self)
-        btns.pack(fill="x", padx=10, pady=8)
+        # Main layout: buttons on the left, list on the right (better visibility on small screens)
+        main = ttk.Frame(self)
+        main.pack(fill="both", expand=True, padx=10, pady=8)
 
-        ttk.Button(btns, text="Ajouter", command=self.add_child).pack(side="left")
-        ttk.Button(btns, text="Modifier", command=self.edit_child).pack(side="left", padx=6)
-        ttk.Button(btns, text="Supprimer", command=self.delete_child).pack(side="left")
-        ttk.Button(btns, text="Sélectionner", command=self.select_child).pack(side="right")
+        left = ttk.Frame(main)
+        left.pack(side="left", fill="y", padx=(0, 10))
+
+        # Vertical action buttons (always visible)
+        ttk.Button(left, text="Ajouter", command=self.add_child).pack(fill="x", pady=(0, 6))
+        ttk.Button(left, text="Modifier", command=self.edit_child).pack(fill="x", pady=(0, 6))
+        ttk.Button(left, text="Supprimer", command=self.delete_child).pack(fill="x", pady=(0, 12))
+
+        ttk.Separator(left, orient="horizontal").pack(fill="x", pady=(0, 12))
+
+        ttk.Button(left, text="Sélectionner", command=self.select_child).pack(fill="x")
+
+        right = ttk.Frame(main)
+        right.pack(side="left", fill="both", expand=True)
+
+        # Move tree into right frame
+        self.tree.pack_forget()
+        self.tree.pack(in_=right, fill="both", expand=True)
 
         self.refresh()
 
