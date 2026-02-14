@@ -27,7 +27,7 @@ class ExercisesDialog(tk.Toplevel):
 
         ttk.Label(top, text="Niveau:").pack(side="left")
         self.var_lvl = tk.StringVar(value="")
-        ttk.Entry(top, textvariable=self.var_lvl, width=4).pack(side="left", padx=6)
+        ttk.Combobox(top, textvariable=self.var_lvl, values=["","1","2","3","4","5"], width=4, state="readonly").pack(side="left", padx=6)
 
         ttk.Label(top, text="Type:").pack(side="left")
         self.var_type = tk.StringVar(value="")

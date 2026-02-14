@@ -21,18 +21,26 @@ class PlaylistsDialog(tk.Toplevel):
         left = ttk.Frame(main)
         left.pack(side="left", fill="y", padx=(0,10))
 
-        ttk.Button(left, text="Créer", command=self.create).pack(fill="x", pady=(0,6))
-        ttk.Button(left, text="Modifier", command=self.edit).pack(fill="x", pady=(0,6))
-        ttk.Button(left, text="Supprimer", command=self.delete).pack(fill="x", pady=(0,12))
+        self.btn_create = ttk.Button(left, text="Créer", command=self.create)
+        self.btn_create.pack(fill="x", pady=(0,6))
+        self.btn_edit = ttk.Button(left, text="Modifier", command=self.edit)
+        self.btn_edit.pack(fill="x", pady=(0,6))
+        self.btn_delete = ttk.Button(left, text="Supprimer", command=self.delete)
+        self.btn_delete.pack(fill="x", pady=(0,12))
 
         ttk.Separator(left, orient="horizontal").pack(fill="x", pady=(0,12))
 
-        ttk.Button(left, text="Ajouter exercice…", command=self.add_exercise).pack(fill="x", pady=(0,6))
-        ttk.Button(left, text="Retirer", command=self.remove_item).pack(fill="x", pady=(0,6))
-        ttk.Button(left, text="↑", command=lambda: self.move_item(-1)).pack(fill="x", pady=(0,6))
-        ttk.Button(left, text="↓", command=lambda: self.move_item(1)).pack(fill="x", pady=(0,12))
+        self.btn_add_ex = ttk.Button(left, text="Ajouter exercice…", command=self.add_exercise)
+        self.btn_add_ex.pack(fill="x", pady=(0,6))
+        self.btn_remove = ttk.Button(left, text="Retirer", command=self.remove_item)
+        self.btn_remove.pack(fill="x", pady=(0,6))
+        self.btn_up = ttk.Button(left, text="↑", command=lambda: self.move_item(-1))
+        self.btn_up.pack(fill="x", pady=(0,6))
+        self.btn_down = ttk.Button(left, text="↓", command=lambda: self.move_item(1))
+        self.btn_down.pack(fill="x", pady=(0,12))
 
-        ttk.Button(left, text="Enregistrer", command=self.save_current).pack(fill="x")
+        self.btn_save = ttk.Button(left, text="Enregistrer", command=self.save_current)
+        self.btn_save.pack(fill="x")
 
         right = ttk.Frame(main)
         right.pack(side="left", fill="both", expand=True)
@@ -62,28 +70,63 @@ class PlaylistsDialog(tk.Toplevel):
         self.tree_items.configure(yscrollcommand=y.set)
         y.pack(side="right", fill="y")
         self.tree_items.pack(side="left", fill="both", expand=True)
+        self.tree_items.bind("<<TreeviewSelect>>", lambda e: self._update_buttons())
 
         self._current_plan_id: Optional[int] = None
         self._items: List[Dict[str, Any]] = []
 
         self.refresh()
 
-    def refresh(self):
-        for i in self.tree_plans.get_children():
-            self.tree_plans.delete(i)
-        rows = []
+    
+    def _update_buttons(self):
+        """Enable/disable buttons based on current selection/state (standard UX)."""
+        # Plan selection
+        pid = self._selected_plan_id()
+        has_plan = pid is not None
+
+        # Item selection
+        sel_item = self.tree_items.selection()
+        has_item = bool(sel_item)
+
+        # Playlist CRUD
         try:
-            rows = self.dl.list_session_plans()
+            self.btn_edit.config(state=("normal" if has_plan else "disabled"))
+            self.btn_delete.config(state=("normal" if has_plan else "disabled"))
         except Exception:
+            pass
+
+        # Items actions
+        try:
+            self.btn_remove.config(state=("normal" if has_item else "disabled"))
+            self.btn_up.config(state=("normal" if has_item else "disabled"))
+            self.btn_down.config(state=("normal" if has_item else "disabled"))
+        except Exception:
+            pass
+
+        # Save enabled if name not empty
+        try:
+            nm = (self.var_name.get() or "").strip()
+            self.btn_save.config(state=("normal" if nm else "disabled"))
+        except Exception:
+            pass
+
+    def refresh(self):
+            for i in self.tree_plans.get_children():
+                self.tree_plans.delete(i)
             rows = []
-        for r in rows:
             try:
-                d = json.loads(r["plan_json"] or "{}")
-                if (d.get("mode") or "") != "playlist":
-                    continue
+                rows = self.dl.list_session_plans()
             except Exception:
-                continue
-            self.tree_plans.insert("", "end", values=(r["id"], r["name"], r["updated_at"]))
+                rows = []
+            for r in rows:
+                try:
+                    d = json.loads(r["plan_json"] or "{}")
+                    if (d.get("mode") or "") != "playlist":
+                        continue
+                except Exception:
+                    continue
+                self.tree_plans.insert("", "end", values=(r["id"], r["name"], r["updated_at"]))
+            self._update_buttons()
 
     def _selected_plan_id(self) -> Optional[int]:
         sel = self.tree_plans.selection()
@@ -118,6 +161,7 @@ class PlaylistsDialog(tk.Toplevel):
             items = [{"text": x} for x in items]
         self._items = list(items)
         self._refresh_items()
+        self._update_buttons()
 
     def _refresh_items(self):
         for i in self.tree_items.get_children():
@@ -133,6 +177,7 @@ class PlaylistsDialog(tk.Toplevel):
         self.var_min.set(5)
         self._items = []
         self._refresh_items()
+        self._update_buttons()
 
     def edit(self):
         self.load_selected()
@@ -161,6 +206,7 @@ class PlaylistsDialog(tk.Toplevel):
         tree.configure(yscrollcommand=y.set)
         y.pack(side="right", fill="y")
         tree.pack(side="left", fill="both", expand=True)
+        d.bind("<Escape>", lambda e: d.destroy())
 
         rows = self.dl.list_exercises()
         for r in rows:
@@ -176,6 +222,9 @@ class PlaylistsDialog(tk.Toplevel):
             res["row"] = {"exercise_id": int(vals[0]), "text": str(vals[5])}
             d.destroy()
 
+        # UX: double-click selects exercise
+        tree.bind("<Double-1>", lambda e: ok())
+
         b = ttk.Frame(d); b.pack(fill="x", padx=10, pady=10)
         ttk.Button(b, text="Annuler", command=d.destroy).pack(side="right")
         ttk.Button(b, text="OK", command=ok).pack(side="right", padx=6)
@@ -189,6 +238,7 @@ class PlaylistsDialog(tk.Toplevel):
             return
         self._items.append({"exercise_id": ex["exercise_id"], "text": ex["text"]})
         self._refresh_items()
+        self._update_buttons()
 
     def remove_item(self):
         sel = self.tree_items.selection()
@@ -198,6 +248,7 @@ class PlaylistsDialog(tk.Toplevel):
         if 0 <= pos < len(self._items):
             self._items.pop(pos)
         self._refresh_items()
+        self._update_buttons()
 
     def move_item(self, delta: int):
         sel = self.tree_items.selection()
@@ -209,6 +260,7 @@ class PlaylistsDialog(tk.Toplevel):
             return
         self._items[idx], self._items[j] = self._items[j], self._items[idx]
         self._refresh_items()
+        self._update_buttons()
         # reselect moved row
         try:
             self.tree_items.selection_set(self.tree_items.get_children()[j])

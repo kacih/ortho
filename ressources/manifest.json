@@ -1,7 +1,7 @@
 {
   "product": {
     "name": "Speech Coach",
-    "app_version": "8.0.1",
+    "app_version": "8.0.4",
     "channel": "stable",
     "git": {
       "commit": "abc1234",

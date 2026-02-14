@@ -22,7 +22,7 @@ class RotationDialog(tk.Toplevel):
         self.var_grade = tk.StringVar(value="")
         self.cmb_grade = ttk.Combobox(top, textvariable=self.var_grade, state="readonly", width=18, values=[])
         self.cmb_grade.pack(side="left", padx=6)
-        self.cmb_grade.bind("<<ComboboxSelected>>", lambda e: self._load_children())
+        self.cmb_grade.bind("<<ComboboxSelected>>", lambda e: (self._load_children(), self._update_buttons()))
 
         ttk.Label(top, text="Playlist:").pack(side="left")
         self.var_plan = tk.StringVar(value="")
@@ -38,10 +38,16 @@ class RotationDialog(tk.Toplevel):
         self.lst.pack(side="left", fill="both", expand=True)
 
         right = ttk.Frame(main); right.pack(side="left", fill="y", padx=(10,0))
-        ttk.Button(right, text="▶️ Démarrer rotation", command=self.start).pack(fill="x", pady=(0,6))
-        ttk.Button(right, text="⏭️ Suivant", command=self.next_child).pack(fill="x", pady=(0,6))
-        ttk.Button(right, text="⏸️ Pause", command=self.pause).pack(fill="x", pady=(0,6))
-        ttk.Button(right, text="⏹️ Stop", command=self.stop).pack(fill="x", pady=(0,12))
+        self.btn_start = ttk.Button(right, text="▶️ Démarrer rotation", command=self.start)
+        self.btn_start.pack(fill="x", pady=(0,6))
+        self.btn_next = ttk.Button(right, text="⏭️ Suivant", command=self.next_child)
+        self.btn_next.pack(fill="x", pady=(0,6))
+        self.btn_pause = ttk.Button(right, text="⏸️ Pause", command=self.pause)
+        self.btn_pause.pack(fill="x", pady=(0,6))
+        self.btn_resume = ttk.Button(right, text="▶️ Reprendre", command=self.resume)
+        self.btn_resume.pack(fill="x", pady=(0,6))
+        self.btn_stop = ttk.Button(right, text="⏹️ Stop", command=self.stop)
+        self.btn_stop.pack(fill="x", pady=(0,12))
 
         ttk.Label(right, text="Timer (sec):").pack(anchor="w")
         self.var_timer = tk.IntVar(value=180)
@@ -58,10 +64,57 @@ class RotationDialog(tk.Toplevel):
 
         self._load_grades()
         self._load_plans()
+        self._update_buttons()
+
+    
+    def _update_buttons(self):
+        """Enable/disable buttons based on current state (standard UX)."""
+        running = bool(self._running)
+        paused = bool(self._paused)
+        has_children = bool(self._children)
+
+        # Start only when not running and children list non-empty
+        try:
+            self.btn_start.config(state=("normal" if (not running and has_children) else "disabled"))
+        except Exception:
+            pass
+
+        # Next only when running and not paused
+        try:
+            self.btn_next.config(state=("normal" if (running and not paused) else "disabled"))
+        except Exception:
+            pass
+
+        # Stop only when running
+        try:
+            self.btn_stop.config(state=("normal" if running else "disabled"))
+        except Exception:
+            pass
+
+        # Pause only when running and not paused
+        try:
+            self.btn_pause.config(state=("normal" if (running and not paused) else "disabled"))
+        except Exception:
+            pass
+
+        # Resume only when running and paused
+        try:
+            self.btn_resume.config(state=("normal" if (running and paused) else "disabled"))
+        except Exception:
+            pass
+
+    def resume(self):
+        """Resume after pause."""
+        if not self._running or not self._paused:
+            return
+        self._paused = False
+        self.lbl.config(text=f"Timer: {self._remaining}s")
+        self._update_buttons()
+        self._tick()
 
     def _load_grades(self):
-        grades = self.dl.list_grades()
-        self.cmb_grade["values"] = [""] + grades
+            grades = self.dl.list_grades()
+            self.cmb_grade["values"] = [""] + grades
 
     def _load_plans(self):
         # only playlist plans
@@ -74,8 +127,7 @@ class RotationDialog(tk.Toplevel):
         for r in rows:
             try:
                 d = json.loads(r["plan_json"] or "{}")
-                if (d.get("mode") or "") != "playlist":
-                    continue
+                # Accept playlist plans; if mode missing, still show (legacy)
             except Exception:
                 continue
             pid = int(r["id"])
@@ -100,6 +152,7 @@ class RotationDialog(tk.Toplevel):
             self._children.append({"id": int(r["id"]), "name": str(r["name"] or "")})
         for c in self._children:
             self.lst.insert("end", f"{c['id']} - {c['name']}")
+        self._update_buttons()
 
     def _apply_selected_plan_to_app(self):
         label = self.var_plan.get().strip()
@@ -122,6 +175,7 @@ class RotationDialog(tk.Toplevel):
         self._paused = False
         self._index = -1
         self.next_child()
+        self._update_buttons()
 
     def next_child(self):
         if not self._running:
@@ -162,15 +216,25 @@ class RotationDialog(tk.Toplevel):
         self.lbl.config(text=f"Timer: {self._remaining}s")
         self._after_id = self.after(1000, self._tick)
 
+    
     def pause(self):
+        """Pause current rotation timer (no toggle)."""
         if not self._running:
             return
-        self._paused = not self._paused
-        if not self._paused:
-            self._tick()
-        self.lbl.config(text="Pause." if self._paused else f"Timer: {self._remaining}s")
+        if self._paused:
+            return
+        self._paused = True
+        if self._after_id:
+            try:
+                self.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+        self.lbl.config(text="Pause.")
+        self._update_buttons()
 
     def stop(self):
+        """Stop rotation and reset state."""
         self._running = False
         self._paused = False
         if self._after_id:
@@ -179,3 +243,4 @@ class RotationDialog(tk.Toplevel):
             except Exception:
                 pass
             self._after_id = None
+        self._update_buttons()
