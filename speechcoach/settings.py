@@ -39,8 +39,8 @@ class SettingsManager:
                     tts_rate REAL,
                     tts_volume REAL,
                     tts_backend TEXT,
-                    edge_voice TEXT,
-                    last_plan_json TEXT,
+                                        edge_voice TEXT,
+last_plan_json TEXT,
                     last_plan_name TEXT,
                     last_plan_mode TEXT,
                     kiosk_mode INTEGER DEFAULT 0
@@ -75,7 +75,7 @@ class SettingsManager:
                     DEFAULT_SETTINGS["tts_rate"],
                     DEFAULT_SETTINGS["tts_volume"],
                     DEFAULT_SETTINGS["tts_backend"],
-                    DEFAULT_SETTINGS["edge_voice"],
+                    DEFAULT_SETTINGS.get("edge_voice",""),
                     DEFAULT_SETTINGS["last_plan_json"],
                     DEFAULT_SETTINGS["last_plan_name"],
                     DEFAULT_SETTINGS["last_plan_mode"],
@@ -87,7 +87,7 @@ class SettingsManager:
     def load(self) -> Dict[str, Any]:
         with self._connect() as con:
             row = con.execute(
-                "SELECT tts_voice, tts_rate, tts_volume, tts_backend, edge_voice, last_plan_json, last_plan_name, last_plan_mode, kiosk_mode FROM user_settings WHERE id=1"
+                "SELECT tts_voice, tts_rate, tts_volume, tts_backend, last_plan_json, last_plan_name, last_plan_mode, kiosk_mode FROM user_settings WHERE id=1"
             ).fetchone()
 
         if not row:
@@ -98,6 +98,7 @@ class SettingsManager:
             "tts_rate": float(row["tts_rate"]) if row["tts_rate"] is not None else DEFAULT_SETTINGS["tts_rate"],
             "tts_volume": float(row["tts_volume"]) if row["tts_volume"] is not None else DEFAULT_SETTINGS["tts_volume"],
             "tts_backend": (row["tts_backend"] or DEFAULT_SETTINGS["tts_backend"]).strip() or DEFAULT_SETTINGS["tts_backend"],
+            "edge_voice": DEFAULT_SETTINGS.get("edge_voice", ""),
             "last_plan_json": row["last_plan_json"] or DEFAULT_SETTINGS["last_plan_json"],
             "last_plan_name": row["last_plan_name"] or DEFAULT_SETTINGS["last_plan_name"],
             "last_plan_mode": row["last_plan_mode"] or DEFAULT_SETTINGS["last_plan_mode"],
@@ -109,6 +110,7 @@ class SettingsManager:
         rate = float(s.get("tts_rate", DEFAULT_SETTINGS["tts_rate"]))
         volume = float(s.get("tts_volume", DEFAULT_SETTINGS["tts_volume"]))
         backend = (s.get("tts_backend", DEFAULT_SETTINGS["tts_backend"]) or "system").strip()
+        edge_voice = (s.get("edge_voice", DEFAULT_SETTINGS.get("edge_voice","")) or "").strip()
         last_plan_json = s.get("last_plan_json", DEFAULT_SETTINGS["last_plan_json"]) or ""
         last_plan_name = s.get("last_plan_name", DEFAULT_SETTINGS["last_plan_name"]) or ""
         last_plan_mode = s.get("last_plan_mode", DEFAULT_SETTINGS["last_plan_mode"]) or ""
@@ -119,6 +121,6 @@ class SettingsManager:
                 """UPDATE user_settings
                    SET tts_voice=?, tts_rate=?, tts_volume=?, tts_backend=?, edge_voice=?, last_plan_json=?, last_plan_name=?, last_plan_mode=?, kiosk_mode=?
                    WHERE id=1""",
-                (voice, rate, volume, backend, last_plan_json, last_plan_name, last_plan_mode, kiosk_mode),
+                (voice, rate, volume, backend, edge_voice, last_plan_json, last_plan_name, last_plan_mode, kiosk_mode),
             )
             con.commit()
