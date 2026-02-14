@@ -23,6 +23,10 @@ from speechcoach.session_manager import build_session_plan, get_preset_plan, pre
 from speechcoach.rewards import load_catalog, choose_new_card_for_child
 
 from .dialogs_children import ChildManagerDialog
+from .dialogs_exercises import ExercisesDialog
+from .dialogs_playlists import PlaylistsDialog
+from .dialogs_rotation import RotationDialog
+from .dialogs_history import HistoryDialog
 from .dialogs_dashboard import DashboardDialog
 from .dialogs_progress import ProgressDialog
 from .dialogs_class import ClassOverviewDialog
@@ -146,6 +150,15 @@ class SpeechCoachApp(tk.Tk):
         m_audio.add_separator()
         menubar.add_cascade(label="Audio", menu=m_audio)
         self._menu_audio = m_audio
+
+
+        m_content = tk.Menu(menubar, tearoff=0)
+        m_content.add_command(label="Bibliothèque d'exercices…", command=self.open_exercises)
+        m_content.add_command(label="Playlists…", command=self.open_playlists)
+        m_content.add_command(label="Rotation classe…", command=self.open_rotation)
+        m_content.add_command(label="Historique enfant…", command=self.open_history)
+        menubar.add_cascade(label="Contenu", menu=m_content)
+        self._menu_content = m_content
 
         m_dash = tk.Menu(menubar, tearoff=0)
         m_dash.add_command(label="Dashboard Pro…", command=self.open_dashboard)
@@ -321,8 +334,29 @@ class SpeechCoachApp(tk.Tk):
         status.pack(fill="x", side="bottom")
 
     # ---- Actions
+    
+    def open_exercises(self):
+        ExercisesDialog(self, self.dl)
+
+    def open_playlists(self):
+        PlaylistsDialog(self, self.dl)
+        # refresh plan combobox (new playlist plans may appear)
+        try:
+            self.refresh_plans()
+        except Exception:
+            pass
+
+    def open_rotation(self):
+        RotationDialog(self, self.dl, app=self)
+
+    def open_history(self):
+        if not self.current_child_id:
+            messagebox.showwarning("Enfant", "Sélectionne d'abord un enfant.")
+            return
+        HistoryDialog(self, self.dl, child_id=int(self.current_child_id))
+
     def open_children(self):
-        ChildManagerDialog(self, self.dl, on_select=self.set_child)
+            ChildManagerDialog(self, self.dl, on_select=self.set_child)
 
     def set_child(self, child_id: int):
         self.current_child_id = child_id

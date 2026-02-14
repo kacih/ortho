@@ -16,6 +16,7 @@ from .analysis import (
 )
 from .utils_text import now_iso, pedagogic_wer
 from .config import AUDIO_DIR
+from .models import Story, StorySentence
 
 
 # ==========================================================
@@ -109,9 +110,38 @@ class GameController:
         if plan is not None and getattr(plan, "rounds", None):
             rounds = int(plan.rounds)
 
-        story = self.stories.pick()
+        # Sprint 8: playlist mode builds an in-memory story from fixed items.
+        story = None
+        try:
+            if plan is not None and (getattr(plan, "mode", "") == "playlist") and getattr(plan, "items", None):
+                items = list(getattr(plan, "items") or [])
+                sentences = []
+                for it in items:
+                    try:
+                        txt = (it.get("text") if isinstance(it, dict) else str(it)) or ""
+                    except Exception:
+                        txt = ""
+                    txt = str(txt).strip()
+                    if txt:
+                        sentences.append(StorySentence(text=txt))
+                if sentences:
+                    story = Story(story_id="playlist", title=getattr(plan, "name", "Playlist"), goal="Playlist", sentences=sentences)
+        except Exception:
+            story = None
+
+        if story is None:
+            story = self.stories.pick()
         if story is None:
             raise ValueError("Impossible de sélectionner une story.")
+
+        # Sprint 8: create a session_run for history grouping (best effort)
+        self._run_id = None
+        try:
+            if self.child_id is not None and plan is not None:
+                planned = int(rounds)
+                self._run_id = self.dl.create_session_run(int(self.child_id), getattr(plan, "to_json_dict", lambda: {})(), planned)
+        except Exception:
+            self._run_id = None
 
         self._thread = threading.Thread(
             target=self._run,
@@ -358,6 +388,7 @@ class GameController:
                     "plan_name": getattr(plan, "name", None),
                     "plan_mode": getattr(plan, "mode", None),
                     "plan_json": json.dumps(getattr(plan, "to_json_dict", lambda: {})(), ensure_ascii=False) if plan else None,
+                    "run_id": getattr(self, "_run_id", None),
                     "sentence_index": i,
                     "expected_text": expected,
                     "recognized_text": rec_text,
@@ -427,6 +458,7 @@ class GameController:
                                             "plan_name": getattr(plan, "name", None),
                                             "plan_mode": getattr(plan, "mode", None),
                                             "plan_json": json.dumps(getattr(plan, "to_json_dict", lambda: {})(), ensure_ascii=False) if plan else None,
+                    "run_id": getattr(self, "_run_id", None),
                                             "sentence_index": i,
                                             "expected_text": sent2.text,
                                             "recognized_text": rec2 or "",
